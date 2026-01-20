@@ -1,0 +1,10 @@
+.env
+.m4a
+text
+node_modules
+chrome-user-data
+dist/
+*.log
+.DS_Store
+temp_*
+metadata.json

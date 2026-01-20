@@ -1,0 +1,70 @@
+{
+  "name": "multi-voice-uploader",
+  "version": "1.0.3",
+  "description": "Multi Voice Uploader - 音声ファイルの文字起こしとアップロード管理ツール",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder"
+  },
+  "keywords": [
+    "electron",
+    "audio",
+    "transcription",
+    "voice-uploader"
+  ],
+  "author": "Munakata",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^24.0.0"
+  },
+  "dependencies": {
+    "fs-extra": "^11.0.0",
+    "tailwindcss": "^3.4.0",
+    "puppeteer": "^22.0.0"
+  },
+  "build": {
+    "appId": "com.munakata.multi-voice-uploader",
+    "productName": "MultiVoiceUploader",
+    "artifactName": "${name}-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "main/**/*",
+      "renderer/**/*",
+      "package.json",
+      "icon.png",
+      "transcribe_audio_local.py",
+      "assets/**/*"
+    ],
+    "asarUnpack": [
+      "transcribe_audio_local.py"
+    ],
+    "mac": {
+      "icon": "icon.png",
+      "extendInfo": {
+        "CFBundleDisplayName": "音声登録できるくん"
+      },
+      "identity": "MEL Tech LLC (PUSB9TBLVC)",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": true
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "icon": "icon.png"
+    }
+  }
+}
