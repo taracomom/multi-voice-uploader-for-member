@@ -7,6 +7,8 @@ const { registerVoicyPublishHandler } = require('./main/voicy-publish')
 const { registerStandfmPublishHandler } = require('./main/standfm-publish')
 const { registerSpotifyPublishHandler } = require('./main/spotify-publish')
 
+app.setName('UminoMultiVoiceUploader')
+
 // 起動直後に main.js が実行されているかを切り分けるためのデバッグ（必要時のみ有効）
 const bootLogPath = '/tmp/voice-uploader-boot.log'
 const bootLog = (message) => {
@@ -74,8 +76,8 @@ function getCandidateUserDataDirs() {
   try {
     const appData = app.getPath('appData')
     if (appData) {
-      dirs.add(path.join(appData, 'multi-voice-uploader'))
-      dirs.add(path.join(appData, 'MultiVoiceUploader'))
+      dirs.add(path.join(appData, 'umino-multi-voice-uploader'))
+      dirs.add(path.join(appData, 'UminoMultiVoiceUploader'))
       try {
         dirs.add(path.join(appData, app.getName()))
       } catch (e) {

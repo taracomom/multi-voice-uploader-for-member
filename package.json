@@ -1,5 +1,5 @@
 {
-  "name": "multi-voice-uploader",
+  "name": "umino-multi-voice-uploader",
   "version": "1.0.3",
   "description": "Multi Voice Uploader - 音声ファイルの文字起こしとアップロード管理ツール",
   "main": "main.js",
@@ -26,8 +26,8 @@
     "puppeteer": "^22.0.0"
   },
   "build": {
-    "appId": "com.munakata.multi-voice-uploader",
-    "productName": "MultiVoiceUploader",
+    "appId": "com.umino.multi-voice-uploader",
+    "productName": "UminoMultiVoiceUploader",
     "artifactName": "${name}-${version}-${arch}.${ext}",
     "directories": {
       "output": "dist"
@@ -47,9 +47,9 @@
     "mac": {
       "icon": "icon.png",
       "extendInfo": {
-        "CFBundleDisplayName": "音声登録できるくん"
+        "CFBundleDisplayName": "Umino音声登録できるくん"
       },
-      "identity": "MEL Tech LLC (PUSB9TBLVC)",
+      "identity": null,
       "hardenedRuntime": true,
       "gatekeeperAssess": true
     },
