@@ -1,5 +1,5 @@
 function registerVoicyPublishHandler({ ipcMain, fs, path, getPageInstance, getAppPaths }) {
-  ipcMain.handle('publish-to-voicy', async (event, basename, broadcastTitle, chapterTitle, chapterUrl, hashtagsString, publishTime, publishDate, description) => {
+  ipcMain.handle('publish-to-voicy', async (event, basename, broadcastTitle, chapterTitle, chapterUrl, hashtagsString, publishTime, publishDate, description, publishMode = 'schedule') => {
     try {
       console.log(`Starting Voicy publish process for: ${basename}`)
 
@@ -237,8 +237,26 @@ function registerVoicyPublishHandler({ ipcMain, fs, path, getPageInstance, getAp
       // アップロードが完了するまで少し待機
       await new Promise(resolve => setTimeout(resolve, 3000))
 
-      // 「日時を指定して予約」ボタンをクリック
-      await page.evaluate(() => {
+      if (publishMode === 'now') {
+        page.on('dialog', async dialog => {
+          console.log(`Dialog appeared: ${dialog.message()}`)
+          await dialog.accept()
+        })
+
+        await page.evaluate(() => {
+          const buttons = Array.from(document.querySelectorAll('button'))
+          const publishButton = buttons.find(button => {
+            const text = button.textContent || ''
+            return text.includes('今すぐ') || text.includes('公開') || text.includes('投稿')
+          })
+          if (!publishButton) throw new Error('Immediate publish button not found')
+          publishButton.click()
+        })
+        console.log('Immediate publish clicked')
+        await new Promise(resolve => setTimeout(resolve, 2000))
+      } else {
+        // 「日時を指定して予約」ボタンをクリック
+        await page.evaluate(() => {
         const buttons = document.querySelectorAll('button')
         for (const button of buttons) {
           if (button.textContent.includes('日時を指定して予約')) {
@@ -247,16 +265,16 @@ function registerVoicyPublishHandler({ ipcMain, fs, path, getPageInstance, getAp
           }
         }
         throw new Error('Reserve button not found')
-      })
+        })
 
-      console.log('Reserve button clicked')
+        console.log('Reserve button clicked')
 
-      // 予約設定モーダルが表示されるまで待機
-      await page.waitForSelector('.app-date-input', { timeout: 30000 })
+        // 予約設定モーダルが表示されるまで待機
+        await page.waitForSelector('.app-date-input', { timeout: 30000 })
 
-      if (!targetDateString) {
-        throw new Error(`Invalid date format for publish date. Basename: ${basename}`)
-      }
+        if (!targetDateString) {
+          throw new Error(`Invalid date format for publish date. Basename: ${basename}`)
+        }
 
       // 日付入力欄に日付を設定
       const dateInput = await page.$('.app-date-input__setting-date__wrapper__input')
@@ -308,12 +326,13 @@ function registerVoicyPublishHandler({ ipcMain, fs, path, getPageInstance, getAp
 
       // 「指定の日時で予約」ボタンをクリック
       const reserveConfirmButton = await page.waitForSelector('#reserve-playlist-button', { timeout: 30000 })
-      await reserveConfirmButton.click()
+        await reserveConfirmButton.click()
 
-      console.log('Reservation confirmed successfully')
+        console.log('Reservation confirmed successfully')
 
-      // Alertが表示されて処理されるまで少し待機
-      await new Promise(resolve => setTimeout(resolve, 2000))
+        // Alertが表示されて処理されるまで少し待機
+        await new Promise(resolve => setTimeout(resolve, 2000))
+      }
 
       // Voicy投稿完了をメタデータに保存
       const metadata = await fs.pathExists(metadataPath) ? await fs.readJson(metadataPath) : {}
@@ -322,13 +341,15 @@ function registerVoicyPublishHandler({ ipcMain, fs, path, getPageInstance, getAp
       }
       metadata[basename].voicyPublished = true
       metadata[basename].voicyPublishedDate = new Date().toISOString()
+      metadata[basename].voicyUrl = page.url()
 
       await fs.writeJson(metadataPath, metadata, { spaces: 2 })
       console.log(`Voicy published status saved for: ${basename}`)
 
       return {
         success: true,
-        message: 'Voicy投稿が完了し、ステータスを保存しました。',
+        message: publishMode === 'now' ? 'Voicy公開が完了し、ステータスを保存しました。' : 'Voicy投稿が完了し、ステータスを保存しました。',
+        voicyUrl: metadata[basename].voicyUrl,
         browser: true
       }
     } catch (error) {
@@ -343,4 +364,3 @@ function registerVoicyPublishHandler({ ipcMain, fs, path, getPageInstance, getAp
 }
 
 module.exports = { registerVoicyPublishHandler }
-

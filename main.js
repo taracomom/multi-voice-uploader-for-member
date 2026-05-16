@@ -358,6 +358,113 @@ ipcMain.handle('read-text-file', async (event, basename) => {
   }
 });
 
+function normalizeTextBlock(text) {
+  return String(text || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function makeTitleTags(title) {
+  const baseWords = String(title || '')
+    .replace(/[【】「」『』（）()［］\[\]!?！？、。,.]/g, ' ')
+    .split(/\s+/)
+    .map(word => word.trim())
+    .filter(word => word.length >= 2)
+    .slice(0, 5)
+
+  const tags = Array.from(new Set([...baseWords, '音声配信']))
+  return tags.join(' ')
+}
+
+function makeGeneratedDescription(title, sourceUrl = '') {
+  const safeTitle = String(title || '').trim() || '今回の配信'
+  const lines = [
+    safeTitle,
+    sourceUrl,
+    '',
+    `${safeTitle}について話しました。`,
+    '気づきや学びを、あとから振り返りやすい形で残しています。'
+  ]
+  return lines.join('\n').trim()
+}
+
+function splitTranscriptIntoParagraphs(text) {
+  const normalized = normalizeTextBlock(text)
+  if (!normalized) return []
+
+  const existingParagraphs = normalized.split(/\n{2,}/).map(s => s.trim()).filter(Boolean)
+  if (existingParagraphs.length > 1) return existingParagraphs
+
+  const sentences = normalized
+    .replace(/([。！？!?])\s*/g, '$1\n')
+    .split('\n')
+    .map(s => s.trim())
+    .filter(Boolean)
+
+  const paragraphs = []
+  let current = ''
+  for (const sentence of sentences) {
+    if (!current) {
+      current = sentence
+      continue
+    }
+    if ((current + sentence).length > 260) {
+      paragraphs.push(current)
+      current = sentence
+    } else {
+      current += sentence
+    }
+  }
+  if (current) paragraphs.push(current)
+  return paragraphs.length > 0 ? paragraphs : [normalized]
+}
+
+ipcMain.handle('generate-title-assets', async (event, { title, sourceUrl } = {}) => {
+  return {
+    success: true,
+    description: makeGeneratedDescription(title, sourceUrl),
+    hashtags: makeTitleTags(title)
+  }
+})
+
+ipcMain.handle('generate-article-md', async (event, basename, options = {}) => {
+  try {
+    await ensureDirectories()
+    const textFile = path.join(textDir, basename + '.txt')
+    if (!(await fs.pathExists(textFile))) {
+      return { success: false, message: '先に文字起こしを実行してください。' }
+    }
+
+    const metadata = await fs.pathExists(metadataPath) ? await fs.readJson(metadataPath) : {}
+    const itemMetadata = metadata[basename] || {}
+    const transcript = await fs.readFile(textFile, 'utf8')
+    const title = options.title || itemMetadata.title || basename.replace(/^\d{8}_/, '')
+    const paragraphs = splitTranscriptIntoParagraphs(transcript)
+    const body = paragraphs.join('\n\n')
+    const sourceUrl = options.sourceUrl || itemMetadata.standfmUrl || itemMetadata.voicyUrl || ''
+    const sourceBlock = sourceUrl ? `\n\n## 関連リンク\n\n- ${sourceUrl}` : ''
+    const markdown = `# ${title}\n\n## はじめに\n\n${paragraphs[0] || ''}\n\n## 本文\n\n${body}${sourceBlock}\n\n## まとめ\n\n今回の内容をもとに、日々の行動や判断に活かせるポイントを整理しました。\n`
+    const mdFile = path.join(mdDir, basename + '.md')
+
+    await fs.ensureDir(mdDir)
+    await fs.writeFile(mdFile, markdown, 'utf8')
+    metadata[basename] = {
+      ...itemMetadata,
+      articleGenerated: true,
+      articleGeneratedDate: new Date().toISOString()
+    }
+    await fs.writeJson(metadataPath, metadata, { spaces: 2 })
+
+    return { success: true, path: mdFile, content: markdown }
+  } catch (error) {
+    console.error('Error generating article:', error)
+    return { success: false, message: error.message }
+  }
+})
+
 // 音声ファイルを削除
 ipcMain.handle('delete-audio-file', async (event, { basename, filename }) => {
   try {

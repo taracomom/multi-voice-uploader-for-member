@@ -11,7 +11,7 @@ function registerStandfmPublishHandler({
   waitForStandfmImagePreview,
   getFileInputsSnapshot
 }) {
-  ipcMain.handle('publish-to-standfm', async (event, basename, description, bgm, publishDate, publishTime, category, imagePath, broadcastTitle) => {
+  ipcMain.handle('publish-to-standfm', async (event, basename, description, bgm, publishDate, publishTime, category, imagePath, broadcastTitle, publishMode = 'schedule') => {
     try {
       console.log(`Starting Stand.fm publish process for: ${basename}`);
       const debugStandfmImage = process.env.VUT_DEBUG_STANDFM_IMAGE === '1'
@@ -374,9 +374,10 @@ function registerStandfmPublishHandler({
 
       await new Promise(resolve => setTimeout(resolve, 1000));
 
-      // 公開日時を「日時を指定して公開」に設定して06:10に設定 - react-select-3を直接操作
-      console.log('Setting publish date/time to scheduled at 06:10...');
-      try {
+      if (publishMode !== 'now') {
+        // 公開日時を「日時を指定して公開」に設定して06:10に設定 - react-select-3を直接操作
+        console.log('Setting publish date/time to scheduled at 06:10...');
+        try {
         // react-select-3のコントロール要素を直接操作
         const publishTimeControl = await page.$('#react-select-3-input');
 
@@ -596,8 +597,11 @@ function registerStandfmPublishHandler({
         } else {
           console.log('react-select-3-input not found');
         }
-      } catch (publishTimeError) {
-        console.log('Could not set publish time:', publishTimeError.message);
+        } catch (publishTimeError) {
+          console.log('Could not set publish time:', publishTimeError.message);
+        }
+      } else {
+        console.log('Publish mode is now. Keeping immediate publish setting.');
       }
 
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -690,18 +694,20 @@ function registerStandfmPublishHandler({
       await new Promise(resolve => setTimeout(resolve, 1000));
       */
 
-      // 予約投稿ボタンをクリック
-      console.log('Clicking scheduled publish button...');
+      const publishButtonLabel = publishMode === 'now' ? '公開する' : '予約投稿する';
+
+      // 投稿ボタンをクリック
+      console.log(`Clicking ${publishButtonLabel} button...`);
       try {
-        // より具体的なセレクターで「予約投稿する」ボタンを探す
-        const publishButtonClicked = await page.evaluate(() => {
+        // より具体的なセレクターで投稿ボタンを探す
+        const publishButtonClicked = await page.evaluate((label) => {
           // divでtabindex="0"を持ち、「予約投稿する」テキストを含む要素を探す
           const buttons = Array.from(document.querySelectorAll('div[tabindex="0"]'));
           console.log(`Found ${buttons.length} clickable div elements`);
 
           const publishButton = buttons.find(btn => {
             const text = btn.textContent || '';
-            return text.includes('予約投稿する');
+            return text.includes(label) || (label === '公開する' && text.includes('公開する'));
           });
 
           if (publishButton) {
@@ -716,7 +722,7 @@ function registerStandfmPublishHandler({
             // フォールバック: すべての要素をチェック
             const allElements = Array.from(document.querySelectorAll('*'));
             const fallbackButton = allElements.find(el =>
-              el.textContent && el.textContent.trim() === '予約投稿する'
+              el.textContent && (el.textContent.trim() === label || (label === '公開する' && el.textContent.trim() === '公開'))
             );
 
             if (fallbackButton) {
@@ -728,7 +734,7 @@ function registerStandfmPublishHandler({
 
           console.log('No publish button found');
           return false;
-        });
+        }, publishButtonLabel);
 
         if (publishButtonClicked) {
           console.log('Scheduled publish button clicked successfully');
@@ -760,6 +766,7 @@ function registerStandfmPublishHandler({
           }
           metadata[basename].standfmPublished = true;
           metadata[basename].standfmPublishedDate = new Date().toISOString();
+          metadata[basename].standfmUrl = page.url();
 
           await fs.writeJson(metadataPath, metadata, { spaces: 2 });
           console.log(`Stand.fm published status saved for: ${basename}`);
@@ -768,7 +775,7 @@ function registerStandfmPublishHandler({
           console.log('Scheduled publish button not found - trying additional methods');
 
           // 追加の試行: CSSセレクターで探す
-          const alternativeClick = await page.evaluate(() => {
+          const alternativeClick = await page.evaluate((label) => {
             // 背景色がピンクの要素を探す
             const pinkButtons = Array.from(document.querySelectorAll('div')).filter(div => {
               const styles = window.getComputedStyle(div);
@@ -779,7 +786,7 @@ function registerStandfmPublishHandler({
             console.log(`Found ${pinkButtons.length} pink buttons`);
 
             const publishBtn = pinkButtons.find(btn =>
-              btn.textContent && btn.textContent.includes('予約投稿する')
+              btn.textContent && (btn.textContent.includes(label) || (label === '公開する' && btn.textContent.includes('公開')))
             );
 
             if (publishBtn) {
@@ -789,7 +796,7 @@ function registerStandfmPublishHandler({
             }
 
             return false;
-          });
+          }, publishButtonLabel);
 
           if (alternativeClick) {
             console.log('Alternative publish button click successful');
@@ -823,7 +830,8 @@ function registerStandfmPublishHandler({
 
       return {
         success: true,
-        message: 'Stand.fm予約投稿が完了しました。',
+        message: publishMode === 'now' ? 'Stand.fm公開が完了しました。' : 'Stand.fm予約投稿が完了しました。',
+        standfmUrl: page.url(),
         browser: true
       };
 
@@ -839,4 +847,3 @@ function registerStandfmPublishHandler({
 }
 
 module.exports = { registerStandfmPublishHandler }
-

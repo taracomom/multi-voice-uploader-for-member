@@ -441,6 +441,10 @@ function createFileItem(file) {
             <button class="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-indigo-400 rounded-md transition-all shadow-sm hover:shadow" onclick="downloadTranscription('${file.basename}')" title="テキストファイルをダウンロード">
                 <i data-lucide="download" class="w-3.5 h-3.5"></i>
             </button>
+            <button class="px-2.5 py-1.5 ${file.hasMd ? 'bg-blue-500/10 text-blue-400' : 'bg-slate-900 text-slate-400 hover:text-blue-400'} rounded-md text-xs font-bold flex items-center gap-1.5 shadow-sm border border-slate-700 hover:border-blue-500/40 transition-all" onclick="generateArticle('${file.basename}')" title="文字起こしから記事Markdownを作成">
+                <i data-lucide="${file.hasMd ? 'file-check-2' : 'file-pen-line'}" class="w-3.5 h-3.5"></i>
+                ${file.hasMd ? '記事済' : '記事作成'}
+            </button>
         </div>` :
         `<div class="flex items-center gap-2">
             <button class="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-bold transition-all shadow-md shadow-amber-500/10 hover:shadow-amber-500/20 flex items-center gap-1.5 group transform hover:-translate-y-0.5 active:translate-y-0" onclick="transcribeAudio('${file.filename}')" title="文字起こし実行">
@@ -487,6 +491,12 @@ function createFileItem(file) {
             Spotify投稿
         </button>`) : ''
 
+    const continuousButton = (platformSettings.standfm && platformSettings.voicy) ?
+        `<button class="w-[130px] flex justify-center px-3 py-1.5 bg-blue-600/20 border border-blue-500/30 text-blue-300 hover:text-white hover:bg-blue-600 rounded-lg text-xs font-bold transition-all shadow-sm hover:shadow-md flex items-center gap-1.5 group" onclick="publishStandfmThenVoicy('${file.basename}', '${file.publishDate || ''}')" title="stand.fmに投稿後、Voicyにも続けて投稿">
+            <i data-lucide="workflow" class="w-3.5 h-3.5"></i>
+            連続投稿
+        </button>` : ''
+
 
 
     return `
@@ -526,6 +536,7 @@ function createFileItem(file) {
                     ${standfmButton}
                     ${voicyButton}
                     ${spotifyButton}
+                    ${continuousButton}
                 </div>
             </div>
         </div>
@@ -556,6 +567,10 @@ async function addAudioFile() {
             const result = await ipcRenderer.invoke('copy-to-mp4', filePath);
             if (result.success) {
                 await loadAudioFiles();
+                const transcribeResult = await transcribeAudio(result.filename, { silent: true });
+                if (transcribeResult && transcribeResult.success) {
+                    showToast('音声追加後の自動文字起こしが完了しました');
+                }
             } else {
                 alert(`ファイルのコピーに失敗しました: ${result.message}`);
             }
@@ -587,34 +602,97 @@ async function deleteAudioFile(basename, filename) {
 }
 
 // 文字起こし実行
-async function transcribeAudio(filename) {
+async function transcribeAudio(filename, options = {}) {
+    let button = null;
+    let originalHTML = '';
     try {
-        const button = event.target;
-        const originalHTML = button.innerHTML;
-        button.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>処理中...';
-        button.disabled = true;
-        lucide.createIcons();
+        button = typeof event !== 'undefined' && event.target ? event.target.closest('button') : null;
+        if (button) {
+            originalHTML = button.innerHTML;
+            button.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>処理中...';
+            button.disabled = true;
+            lucide.createIcons();
+        }
 
         const result = await ipcRenderer.invoke('transcribe-audio', filename);
 
         if (result.success) {
-            alert('文字起こしが完了しました！');
+            if (!options.silent) alert('文字起こしが完了しました！');
             await loadAudioFiles();
+            return result;
         } else {
             // エラーメッセージを改行を含めて表示
             const errorMsg = result.message || '文字起こしに失敗しました';
-            alert(errorMsg);
+            if (options.silent) {
+                showToast('自動文字起こしに失敗しました。ヘルプボタンから設定を確認してください。', 'error');
+            } else {
+                alert(errorMsg);
+            }
+            if (button) {
+                button.innerHTML = originalHTML;
+                button.disabled = false;
+                lucide.createIcons();
+            }
+            return result;
+        }
+    } catch (error) {
+        console.error('文字起こしエラー:', error);
+        if (!options.silent) alert('文字起こしの実行に失敗しました');
+        if (button) {
             button.innerHTML = originalHTML;
             button.disabled = false;
             lucide.createIcons();
         }
-    } catch (error) {
-        console.error('文字起こしエラー:', error);
-        alert('文字起こしの実行に失敗しました');
-        button.innerHTML = originalHTML;
-        button.disabled = false;
-        lucide.createIcons();
+        return { success: false, message: error.message };
     }
+}
+
+async function generateArticle(basename) {
+    try {
+        const file = audioFiles.find(f => f.basename === basename);
+        const result = await ipcRenderer.invoke('generate-article-md', basename, {
+            title: file ? file.title : ''
+        });
+
+        if (result.success) {
+            await navigator.clipboard.writeText(result.content);
+            await loadAudioFiles();
+            showToast('記事Markdownを作成し、コピーしました');
+        } else {
+            showToast(`記事作成に失敗しました: ${result.message}`, 'error');
+        }
+    } catch (error) {
+        console.error('記事作成エラー:', error);
+        showToast('記事作成に失敗しました', 'error');
+    }
+}
+
+async function fillGeneratedAssets({ titleInputId, descriptionInputId, hashtagsInputId, sourceUrlInputId }) {
+    const titleInput = document.getElementById(titleInputId);
+    const descriptionInput = document.getElementById(descriptionInputId);
+    const hashtagsInput = hashtagsInputId ? document.getElementById(hashtagsInputId) : null;
+    const sourceUrlInput = sourceUrlInputId ? document.getElementById(sourceUrlInputId) : null;
+    const title = titleInput ? titleInput.value : '';
+    const sourceUrl = sourceUrlInput ? sourceUrlInput.value : '';
+
+    const result = await ipcRenderer.invoke('generate-title-assets', { title, sourceUrl });
+    if (!result.success) {
+        showToast('生成に失敗しました', 'error');
+        return;
+    }
+    if (descriptionInput) descriptionInput.value = result.description;
+    if (hashtagsInput) hashtagsInput.value = result.hashtags;
+    showToast('タイトルから概要欄を生成しました');
+}
+
+function extractVoicyPartFromStandfmDescription(description) {
+    const lines = String(description || '')
+        .split(/\r?\n/)
+        .map(line => line.trim());
+    return {
+        chapterTitle: lines[0] || '',
+        chapterUrl: lines[1] || ''
+    };
 }
 
 // Toast通知を表示
@@ -1001,6 +1079,18 @@ function publishToVoicy(basename, initialDate) {
         confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
         newConfirmBtn.addEventListener('click', () => executeVoicyPublish());
 
+        const generateBtn = document.getElementById('generateVoicyAssetsBtn');
+        if (generateBtn) {
+            const newGenerateBtn = generateBtn.cloneNode(true);
+            generateBtn.parentNode.replaceChild(newGenerateBtn, generateBtn);
+            newGenerateBtn.addEventListener('click', () => fillGeneratedAssets({
+                titleInputId: 'voicyBroadcastTitle',
+                descriptionInputId: 'voicyDescription',
+                hashtagsInputId: 'voicyHashtags',
+                sourceUrlInputId: 'voicyChapterUrl'
+            }));
+        }
+
         // チャプタータイトルのデフォルト保存ボタン
         const saveTitleBtn = document.getElementById('saveVoicyTitleDefaultBtn');
         const newSaveTitleBtn = saveTitleBtn.cloneNode(true);
@@ -1344,6 +1434,16 @@ window.publishToSpotify = async function publishToSpotify(basename, initialDate)
                 })
             }
 
+            const generateBtn = document.getElementById('generateSpotifyAssetsBtn')
+            if (generateBtn) {
+                const newGenerateBtn = generateBtn.cloneNode(true)
+                generateBtn.parentNode.replaceChild(newGenerateBtn, generateBtn)
+                newGenerateBtn.addEventListener('click', () => fillGeneratedAssets({
+                    titleInputId: 'spotifyBroadcastTitle',
+                    descriptionInputId: 'spotifyDescription'
+                }))
+            }
+
             // モーダルを表示
             modal.classList.remove('opacity-0', 'pointer-events-none')
             modal.setAttribute('aria-hidden', 'false')
@@ -1369,16 +1469,17 @@ async function executeVoicyPublish() {
         const hashtags = document.getElementById('voicyHashtags').value;
         const publishTime = document.getElementById('voicyPublishTime').value;
         const publishDate = document.getElementById('voicyPublishDate') ? document.getElementById('voicyPublishDate').value : '';
+        const publishMode = document.getElementById('voicyPublishMode') ? document.getElementById('voicyPublishMode').value : 'schedule';
 
         // 未来チェック
-        if (publishDate && publishTime) {
+        if (publishMode !== 'now' && publishDate && publishTime) {
             const scheduledDateTime = new Date(`${publishDate}T${publishTime}`);
             const now = new Date();
             if (scheduledDateTime <= now) {
                 alert('予約投稿日時は現在時刻より未来である必要があります。');
                 return;
             }
-        } else {
+        } else if (publishMode !== 'now') {
             alert('予約投稿日時が正しく設定されていません。');
             return;
         }
@@ -1389,7 +1490,7 @@ async function executeVoicyPublish() {
         button.disabled = true;
         lucide.createIcons();
 
-        const result = await ipcRenderer.invoke('publish-to-voicy', currentVoicyTargetFile, broadcastTitle, chapterTitle, url, hashtags, publishTime, publishDate, description);
+        const result = await ipcRenderer.invoke('publish-to-voicy', currentVoicyTargetFile, broadcastTitle, chapterTitle, url, hashtags, publishTime, publishDate, description, publishMode);
 
         if (result.success) {
             console.log(result.message);
@@ -1834,6 +1935,16 @@ window.publishToStandfm = async function publishToStandfm(basename, initialDate)
 
             newConfirmBtn.addEventListener('click', () => executeStandfmPublish());
 
+            const generateBtn = document.getElementById('generateStandfmAssetsBtn');
+            if (generateBtn) {
+                const newGenerateBtn = generateBtn.cloneNode(true);
+                generateBtn.parentNode.replaceChild(newGenerateBtn, generateBtn);
+                newGenerateBtn.addEventListener('click', () => fillGeneratedAssets({
+                    titleInputId: 'standfmBroadcastTitle',
+                    descriptionInputId: 'standfmDescription'
+                }));
+            }
+
             lucide.createIcons();
         } else {
             console.error('Stand.fm投稿モーダルが見つかりません');
@@ -1857,6 +1968,7 @@ async function executeStandfmPublish() {
         const publishDate = document.getElementById('standfmPublishDate') ? document.getElementById('standfmPublishDate').value : '';
         const publishTime = document.getElementById('standfmPublishTime') ? document.getElementById('standfmPublishTime').value : '';
         const broadcastTitle = document.getElementById('standfmBroadcastTitle') ? document.getElementById('standfmBroadcastTitle').value : '';
+        const publishMode = document.getElementById('standfmPublishMode') ? document.getElementById('standfmPublishMode').value : 'schedule';
 
         const button = document.getElementById('confirmStandfmPublishBtn');
         const originalHTML = button.innerHTML;
@@ -1878,7 +1990,8 @@ async function executeStandfmPublish() {
             publishTime,
             category,
             imagePath,
-            broadcastTitle
+            broadcastTitle,
+            publishMode
         );
         console.log('Stand.fm投稿結果:', result);
 
@@ -1928,6 +2041,7 @@ async function executeSpotifyPublish() {
         const publishDate = document.getElementById('spotifyPublishDate') ? document.getElementById('spotifyPublishDate').value : ''
         const publishTime = document.getElementById('spotifyPublishTime') ? document.getElementById('spotifyPublishTime').value : ''
         const broadcastTitle = document.getElementById('spotifyBroadcastTitle') ? document.getElementById('spotifyBroadcastTitle').value : ''
+        const publishMode = document.getElementById('spotifyPublishMode') ? document.getElementById('spotifyPublishMode').value : 'schedule'
 
         const button = document.getElementById('confirmSpotifyPublishBtn')
         const originalHTML = button.innerHTML
@@ -1947,7 +2061,8 @@ async function executeSpotifyPublish() {
             description,
             imagePath,
             publishDate,
-            publishTime
+            publishTime,
+            publishMode
         )
         console.log('Spotify投稿結果:', result)
 
@@ -1984,6 +2099,77 @@ window.closeSpotifyPublishModal = function () {
     if (modal) {
         modal.classList.add('opacity-0', 'pointer-events-none')
         currentSpotifyTargetFile = null
+    }
+}
+
+async function getTitleForFile(basename) {
+    const file = audioFiles.find(f => f.basename === basename);
+    return (file && file.title) || basename.replace(/^\d{8}_/, '');
+}
+
+async function publishStandfmThenVoicy(basename, initialDate) {
+    if (!confirm('stand.fmに投稿後、続けてVoicyにも投稿します。開始しますか？')) {
+        return;
+    }
+
+    try {
+        const title = await getTitleForFile(basename);
+        const generated = await ipcRenderer.invoke('generate-title-assets', { title });
+        const standfmDescription = generated.description || title;
+        const { chapterTitle, chapterUrl } = extractVoicyPartFromStandfmDescription(standfmDescription);
+
+        const publishDate = initialDate || '';
+        const standfmTime = await ipcRenderer.invoke('get-config', 'standfmDefaultTime') || '06:10';
+        const voicyTime = localStorage.getItem('voicy_default_time') || '06:30';
+        const bgm = await ipcRenderer.invoke('get-config', 'standfmDefaultBgm') || '';
+        const category = await ipcRenderer.invoke('get-config', 'standfmDefaultCategory') || 'ビジネス';
+        const imagePath = await ipcRenderer.invoke('get-config', 'standfmDefaultImage') || '';
+        const hashtags = generated.hashtags || '';
+
+        showToast('stand.fmへの投稿を開始します');
+        const standfmResult = await ipcRenderer.invoke(
+            'publish-to-standfm',
+            basename,
+            standfmDescription,
+            bgm,
+            publishDate,
+            standfmTime,
+            category,
+            imagePath,
+            title,
+            'schedule'
+        );
+
+        if (!standfmResult.success) {
+            showToast(`stand.fm投稿エラー: ${standfmResult.message}`, 'error');
+            return;
+        }
+
+        showToast('続けてVoicyへの投稿を開始します');
+        const voicyDescription = standfmDescription;
+        const voicyChapterUrl = chapterUrl || standfmResult.standfmUrl || '';
+        const voicyResult = await ipcRenderer.invoke(
+            'publish-to-voicy',
+            basename,
+            title,
+            chapterTitle,
+            voicyChapterUrl,
+            hashtags,
+            voicyTime,
+            publishDate,
+            voicyDescription,
+            'schedule'
+        );
+
+        if (voicyResult.success) {
+            await loadAudioFiles();
+            showToast('stand.fm → Voicyの連続投稿が完了しました');
+        } else {
+            showToast(`Voicy投稿エラー: ${voicyResult.message}`, 'error');
+        }
+    } catch (error) {
+        console.error('連続投稿エラー:', error);
+        showToast('連続投稿に失敗しました: ' + error.message, 'error');
     }
 }
 
@@ -2092,6 +2278,8 @@ window.editFile = editFile;
 window.transcribeAudio = transcribeAudio;
 window.copyTranscriptionPrompt = copyTranscriptionPrompt;
 window.downloadTranscription = downloadTranscription;
+window.generateArticle = generateArticle;
+window.publishStandfmThenVoicy = publishStandfmThenVoicy;
 window.publishToVoicy = publishToVoicy;
 window.publishToSpotify = publishToSpotify;
 window.closeSpotifyPublishModal = closeSpotifyPublishModal

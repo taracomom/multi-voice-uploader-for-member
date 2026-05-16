@@ -27,7 +27,7 @@ async function waitForUrlToContain(page, substr, timeoutMs) {
 }
 
 function registerSpotifyPublishHandler({ ipcMain, fs, path, getPageInstance, getAppPaths }) {
-  ipcMain.handle('publish-to-spotify', async (event, basename, broadcastTitle, description, imagePath, publishDate, publishTime) => {
+  ipcMain.handle('publish-to-spotify', async (event, basename, broadcastTitle, description, imagePath, publishDate, publishTime, publishMode = 'schedule') => {
     try {
       console.log('[Spotify] 処理開始')
       const page = await getPageInstance()
@@ -1033,9 +1033,10 @@ function registerSpotifyPublishHandler({ ipcMain, fs, path, getPageInstance, get
         console.log('[Spotify] ステップ12: 画像がアップロードされているため、「次へ」ボタンのクリックはスキップします（既にクリック済み）')
       }
 
-      // 13) スケジュールセクションの処理（「次へ」ボタンクリック後）
-      console.log('[Spotify] ステップ13: スケジュールセクションの表示を待機中...')
-      try {
+      if (publishMode !== 'now') {
+        // 13) スケジュールセクションの処理（「次へ」ボタンクリック後）
+        console.log('[Spotify] ステップ13: スケジュールセクションの表示を待機中...')
+        try {
         // スケジュールセクションが表示されるまで待つ（複数のセレクターを試す）
         const scheduleSelectors = [
           '#schedule-accordion',
@@ -1664,10 +1665,13 @@ function registerSpotifyPublishHandler({ ipcMain, fs, path, getPageInstance, get
             console.log('[Spotify] スクリーンショットの取得に失敗しました:', screenshotError.message)
           }
         }
-      } catch (scheduleError) {
-        console.error('[Spotify] スケジュールセクションの処理でエラーが発生しました:', scheduleError.message)
-        console.error('[Spotify] エラースタック:', scheduleError.stack)
-        // エラーが発生しても処理を続行（スケジュール設定は必須ではない可能性があるため）
+        } catch (scheduleError) {
+          console.error('[Spotify] スケジュールセクションの処理でエラーが発生しました:', scheduleError.message)
+          console.error('[Spotify] エラースタック:', scheduleError.stack)
+          // エラーが発生しても処理を続行（スケジュール設定は必須ではない可能性があるため）
+        }
+      } else {
+        console.log('[Spotify] Publish mode is now. Skipping schedule setup.')
       }
 
       // 14) 「スケジュール」ボタンを押す
@@ -1787,4 +1791,3 @@ function registerSpotifyPublishHandler({ ipcMain, fs, path, getPageInstance, get
 }
 
 module.exports = { registerSpotifyPublishHandler }
-
