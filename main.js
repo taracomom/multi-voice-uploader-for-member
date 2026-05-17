@@ -424,6 +424,118 @@ function splitTranscriptIntoParagraphs(text) {
   return paragraphs.length > 0 ? paragraphs : [normalized]
 }
 
+function getGeneratedMarkdownFiles(basename) {
+  return {
+    noteArticle: path.join(mdDir, basename + '.md'),
+    keyPoints: path.join(mdDir, basename + '_key_points.md'),
+    titleCandidates: path.join(mdDir, basename + '_title_candidates.md'),
+    newsletter: path.join(mdDir, basename + '_newsletter.md')
+  }
+}
+
+function splitIntoSentences(text) {
+  return normalizeTextBlock(text)
+    .replace(/([。！？!?])\s*/g, '$1\n')
+    .split('\n')
+    .map(s => s.trim())
+    .filter(Boolean)
+}
+
+function trimText(text, maxLength) {
+  const value = String(text || '').trim()
+  if (value.length <= maxLength) return value
+  return value.slice(0, maxLength - 1).trimEnd() + '…'
+}
+
+function extractKeywordCandidates(title, transcript) {
+  const source = `${title}\n${transcript}`
+    .replace(/[【】「」『』（）()［］\[\]!?！？、。,.／/｜|:：;；・\-_]/g, ' ')
+  const words = source
+    .split(/\s+/)
+    .map(word => word.trim())
+    .filter(word => word.length >= 2)
+    .filter(word => !/^(です|ます|こと|これ|それ|ため|よう|感じ|今回|今日|昨日|明日|音声|配信|ですね|ました|する|した|ある|いる|なる|から|まで)$/.test(word))
+
+  return Array.from(new Set(words)).slice(0, 8)
+}
+
+function pickImportantSentences(transcript, limit = 7) {
+  const sentences = splitIntoSentences(transcript)
+  const scored = sentences
+    .map((sentence, index) => {
+      const score =
+        (/(大事|重要|ポイント|つまり|結論|理由|学び|気づき|必要|課題|改善|おすすめ|実は)/.test(sentence) ? 3 : 0) +
+        (sentence.length >= 35 && sentence.length <= 160 ? 2 : 0) +
+        (index < 5 ? 1 : 0)
+      return { sentence, index, score }
+    })
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, limit)
+    .sort((a, b) => a.index - b.index)
+    .map(item => trimText(item.sentence, 150))
+
+  if (scored.length > 0) return scored
+  return splitTranscriptIntoParagraphs(transcript).slice(0, limit).map(p => trimText(p, 150))
+}
+
+function buildKeyPointsMarkdown({ title, transcript, sourceUrl }) {
+  const points = pickImportantSentences(transcript, 8)
+  const sourceBlock = sourceUrl ? `\n\n## 元リンク\n\n- ${sourceUrl}` : ''
+  const bullets = points.length > 0
+    ? points.map(point => `- ${point}`).join('\n')
+    : '- 文字起こしの内容から、あとで確認しやすい要点を整理してください。'
+
+  return `# 要点抽出: ${title}\n\n## 要点\n\n${bullets}${sourceBlock}\n`
+}
+
+function buildTitleCandidatesMarkdown({ title, transcript }) {
+  const keywords = extractKeywordCandidates(title, transcript)
+  const lead = pickImportantSentences(transcript, 3)
+  const keywordText = keywords.length > 0 ? keywords.join(' / ') : '音声配信'
+  const titles = Array.from(new Set([
+    title,
+    `${title}で考えたこと`,
+    `${title}から見えた大事なポイント`,
+    `なぜ${title}が大切なのか`,
+    `${keywords[0] || title}を続けるために必要なこと`,
+    `${keywords[0] || title}の気づきと実践メモ`,
+    `${keywords[1] || '日々の学び'}を変える${keywords[0] || title}の話`,
+    lead[0] ? trimText(lead[0].replace(/[。！？!?]$/, ''), 42) : ''
+  ].filter(Boolean))).slice(0, 8)
+
+  return `# タイトル候補: ${title}\n\n## 候補\n\n${titles.map((candidate, index) => `${index + 1}. ${candidate}`).join('\n')}\n\n## キーワード\n\n${keywordText}\n\n## ハッシュタグ案\n\n${makeTitleTags(title)}\n`
+}
+
+function buildNoteArticleMarkdown({ title, transcript, sourceUrl }) {
+  const paragraphs = splitTranscriptIntoParagraphs(transcript)
+  const intro = paragraphs[0] || ''
+  const body = paragraphs.join('\n\n')
+  const sourceBlock = sourceUrl ? `\n\n## 関連リンク\n\n- ${sourceUrl}` : ''
+
+  return `# ${title}\n\n## はじめに\n\n${intro}\n\n## 本文\n\n${body}${sourceBlock}\n\n## まとめ\n\n今回の内容をもとに、日々の行動や判断に活かせるポイントを整理しました。\n`
+}
+
+function buildNewsletterMarkdown({ title, transcript, sourceUrl }) {
+  const points = pickImportantSentences(transcript, 5)
+  const intro = splitTranscriptIntoParagraphs(transcript)[0] || ''
+  const sourceLine = sourceUrl ? `\n\n音声はこちら:\n${sourceUrl}` : ''
+  const bulletBlock = points.map(point => `- ${point}`).join('\n')
+
+  return `# メルマガ本文: ${title}\n\n件名案: ${title}\n\nこんにちは、海野です。\n\n${intro}\n\n今回のポイントは、次の通りです。\n\n${bulletBlock}\n\n本文では、この内容をもう少し具体的に振り返りました。音声で話したことをそのまま流すのではなく、あとから読み返して行動に移しやすい形で整理しています。${sourceLine}\n\nそれでは、今日もよろしくお願いします。\n`
+}
+
+function buildCombinedMarkdownSet(files) {
+  return [
+    files.keyPoints.content,
+    '---',
+    files.noteArticle.content,
+    '---',
+    files.titleCandidates.content,
+    '---',
+    files.newsletter.content
+  ].join('\n\n')
+}
+
 ipcMain.handle('generate-title-assets', async (event, { title, sourceUrl } = {}) => {
   return {
     success: true,
@@ -444,23 +556,53 @@ ipcMain.handle('generate-article-md', async (event, basename, options = {}) => {
     const itemMetadata = metadata[basename] || {}
     const transcript = await fs.readFile(textFile, 'utf8')
     const title = options.title || itemMetadata.title || basename.replace(/^\d{8}_/, '')
-    const paragraphs = splitTranscriptIntoParagraphs(transcript)
-    const body = paragraphs.join('\n\n')
     const sourceUrl = options.sourceUrl || itemMetadata.standfmUrl || itemMetadata.voicyUrl || ''
-    const sourceBlock = sourceUrl ? `\n\n## 関連リンク\n\n- ${sourceUrl}` : ''
-    const markdown = `# ${title}\n\n## はじめに\n\n${paragraphs[0] || ''}\n\n## 本文\n\n${body}${sourceBlock}\n\n## まとめ\n\n今回の内容をもとに、日々の行動や判断に活かせるポイントを整理しました。\n`
-    const mdFile = path.join(mdDir, basename + '.md')
+    const paths = getGeneratedMarkdownFiles(basename)
+    const files = {
+      keyPoints: {
+        label: '要点抽出',
+        path: paths.keyPoints,
+        content: buildKeyPointsMarkdown({ title, transcript, sourceUrl })
+      },
+      noteArticle: {
+        label: 'note記事',
+        path: paths.noteArticle,
+        content: buildNoteArticleMarkdown({ title, transcript, sourceUrl })
+      },
+      titleCandidates: {
+        label: 'タイトル候補',
+        path: paths.titleCandidates,
+        content: buildTitleCandidatesMarkdown({ title, transcript })
+      },
+      newsletter: {
+        label: 'メルマガ本文',
+        path: paths.newsletter,
+        content: buildNewsletterMarkdown({ title, transcript, sourceUrl })
+      }
+    }
+    const combinedContent = buildCombinedMarkdownSet(files)
 
     await fs.ensureDir(mdDir)
-    await fs.writeFile(mdFile, markdown, 'utf8')
+    for (const file of Object.values(files)) {
+      await fs.writeFile(file.path, file.content, 'utf8')
+    }
     metadata[basename] = {
       ...itemMetadata,
       articleGenerated: true,
-      articleGeneratedDate: new Date().toISOString()
+      articleGeneratedDate: new Date().toISOString(),
+      contentMdGenerated: true,
+      contentMdGeneratedDate: new Date().toISOString(),
+      generatedMdPaths: Object.fromEntries(Object.entries(files).map(([key, file]) => [key, file.path]))
     }
     await fs.writeJson(metadataPath, metadata, { spaces: 2 })
 
-    return { success: true, path: mdFile, content: markdown }
+    return {
+      success: true,
+      path: paths.noteArticle,
+      paths: Object.fromEntries(Object.entries(files).map(([key, file]) => [key, file.path])),
+      content: files.noteArticle.content,
+      combinedContent
+    }
   } catch (error) {
     console.error('Error generating article:', error)
     return { success: false, message: error.message }
@@ -473,12 +615,14 @@ ipcMain.handle('delete-audio-file', async (event, { basename, filename }) => {
     // ファイルパスの構築
     const audioPath = path.join(audioDir, filename);
     const textPath = path.join(textDir, basename + '.txt');
-    const mdPath = path.join(mdDir, basename + '.md');
+    const mdPaths = Object.values(getGeneratedMarkdownFiles(basename));
 
     // ファイルの削除 (存在する場合のみ)
     if (await fs.pathExists(audioPath)) await fs.remove(audioPath);
     if (await fs.pathExists(textPath)) await fs.remove(textPath);
-    if (await fs.pathExists(mdPath)) await fs.remove(mdPath);
+    for (const mdPath of mdPaths) {
+      if (await fs.pathExists(mdPath)) await fs.remove(mdPath);
+    }
 
     // メタデータの削除
     if (await fs.pathExists(metadataPath)) {
