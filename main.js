@@ -1053,6 +1053,47 @@ ipcMain.handle('generate-article-md', async (event, basename, options = {}) => {
   }
 })
 
+ipcMain.handle('read-generated-md', async (event, basename) => {
+  try {
+    await ensureDirectories()
+    const paths = getGeneratedMarkdownFiles(basename)
+    const files = {
+      keyPoints: {
+        label: '要点抽出',
+        path: paths.keyPoints,
+        content: await fs.pathExists(paths.keyPoints) ? await fs.readFile(paths.keyPoints, 'utf8') : ''
+      },
+      noteArticle: {
+        label: 'note記事',
+        path: paths.noteArticle,
+        content: await fs.pathExists(paths.noteArticle) ? await fs.readFile(paths.noteArticle, 'utf8') : ''
+      },
+      titleCandidates: {
+        label: 'タイトル候補',
+        path: paths.titleCandidates,
+        content: await fs.pathExists(paths.titleCandidates) ? await fs.readFile(paths.titleCandidates, 'utf8') : ''
+      },
+      newsletter: {
+        label: 'メルマガ本文',
+        path: paths.newsletter,
+        content: await fs.pathExists(paths.newsletter) ? await fs.readFile(paths.newsletter, 'utf8') : ''
+      }
+    }
+    const existingFiles = Object.fromEntries(Object.entries(files).filter(([, file]) => file.content.trim()))
+    if (Object.keys(existingFiles).length === 0) {
+      return { success: false, message: '先にMD作成を実行してください。' }
+    }
+    return {
+      success: true,
+      paths,
+      content: buildCombinedMarkdownSet(existingFiles)
+    }
+  } catch (error) {
+    console.error('Generated Markdown read failed:', error)
+    return { success: false, message: error.message }
+  }
+})
+
 // 音声ファイルを削除
 ipcMain.handle('delete-audio-file', async (event, { basename, filename }) => {
   try {

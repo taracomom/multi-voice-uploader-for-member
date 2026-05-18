@@ -446,6 +446,14 @@ function createFileItem(file) {
                 <i data-lucide="${file.hasMd ? 'file-check-2' : 'file-pen-line'}" class="w-3.5 h-3.5"></i>
                 ${file.hasMd ? 'MD済' : 'MD作成'}
             </button>
+            ${file.hasMd ? `
+                <button class="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-emerald-400 rounded-md transition-all shadow-sm hover:shadow" onclick="copyGeneratedMarkdown('${file.basename}')" title="作成済みMarkdownをまとめてコピー">
+                    <i data-lucide="copy-check" class="w-3.5 h-3.5"></i>
+                </button>
+                <button class="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-cyan-400 rounded-md transition-all shadow-sm hover:shadow" onclick="downloadGeneratedMarkdown('${file.basename}')" title="作成済みMarkdownをまとめて保存">
+                    <i data-lucide="download" class="w-3.5 h-3.5"></i>
+                </button>
+            ` : ''}
         </div>` :
         `<div class="flex items-center gap-2">
             <button class="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-bold transition-all shadow-md shadow-amber-500/10 hover:shadow-amber-500/20 flex items-center gap-1.5 group transform hover:-translate-y-0.5 active:translate-y-0" onclick="transcribeAudio('${file.filename}')" title="文字起こし実行">
@@ -879,6 +887,44 @@ async function downloadTranscription(basename) {
     } catch (error) {
         console.error('ダウンロードエラー:', error);
         showToast('ダウンロードに失敗しました', 'error');
+    }
+}
+
+async function copyGeneratedMarkdown(basename) {
+    try {
+        const result = await ipcRenderer.invoke('read-generated-md', basename);
+        if (!result.success) {
+            showToast(`Markdownの読み込みに失敗しました: ${result.message}`, 'error');
+            return;
+        }
+        await navigator.clipboard.writeText(result.content);
+        showToast('作成済みMarkdownをまとめてコピーしました');
+    } catch (error) {
+        console.error('Markdownコピーエラー:', error);
+        showToast('Markdownのコピーに失敗しました', 'error');
+    }
+}
+
+async function downloadGeneratedMarkdown(basename) {
+    try {
+        const result = await ipcRenderer.invoke('read-generated-md', basename);
+        if (!result.success) {
+            showToast(`Markdownの読み込みに失敗しました: ${result.message}`, 'error');
+            return;
+        }
+        const blob = new Blob([result.content], { type: 'text/markdown;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${basename}_all.md`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('Markdownをダウンロードしました');
+    } catch (error) {
+        console.error('Markdownダウンロードエラー:', error);
+        showToast('Markdownのダウンロードに失敗しました', 'error');
     }
 }
 
@@ -2452,6 +2498,8 @@ window.editFile = editFile;
 window.transcribeAudio = transcribeAudio;
 window.copyTranscriptionPrompt = copyTranscriptionPrompt;
 window.downloadTranscription = downloadTranscription;
+window.copyGeneratedMarkdown = copyGeneratedMarkdown;
+window.downloadGeneratedMarkdown = downloadGeneratedMarkdown;
 window.generateArticle = generateArticle;
 window.publishToVoicy = publishToVoicy;
 window.publishToSpotify = publishToSpotify;

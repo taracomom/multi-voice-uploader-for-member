@@ -1,6 +1,6 @@
 {
   "name": "umino-multi-voice-uploader",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "description": "Multi Voice Uploader - 音声ファイルの文字起こしとアップロード管理ツール",
   "main": "main.js",
   "scripts": {
