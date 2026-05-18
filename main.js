@@ -676,16 +676,42 @@ function postJson(urlString, body, headers = {}, timeoutMs = 120000) {
   })
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function getGroqRetryMs(error) {
+  const message = error && error.message ? error.message : String(error || '')
+  if (!message.includes('Groq API error 429')) return 0
+  const match = message.match(/try again in ([0-9.]+)s/i)
+  const seconds = match ? Number(match[1]) : 35
+  if (!Number.isFinite(seconds) || seconds <= 0) return 35000
+  return Math.ceil(seconds * 1000) + 1500
+}
+
 async function callGroqChat({ apiKey, model, messages, temperature = 0.4, maxTokens = 6000, responseFormat = null }) {
-  const response = await postJson('https://api.groq.com/openai/v1/chat/completions', {
+  let response = null
+  const body = {
     model: model || DEFAULT_GROQ_MODEL,
     messages,
     temperature,
     max_tokens: maxTokens,
     ...(responseFormat ? { response_format: responseFormat } : {})
-  }, {
-    Authorization: `Bearer ${apiKey}`
-  })
+  }
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      response = await postJson('https://api.groq.com/openai/v1/chat/completions', body, {
+        Authorization: `Bearer ${apiKey}`
+      })
+      break
+    } catch (error) {
+      const retryMs = getGroqRetryMs(error)
+      if (!retryMs || attempt === 1) throw error
+      console.warn(`Groq rate limit reached. Retrying in ${retryMs}ms`)
+      await sleep(retryMs)
+    }
+  }
 
   const content = response && response.choices && response.choices[0] && response.choices[0].message
     ? response.choices[0].message.content
@@ -716,7 +742,7 @@ async function generateAiMarkdownSet({ title, transcript, sourceUrl, basename, c
 
   const model = config.groqModel || DEFAULT_GROQ_MODEL
   const writingGuidance = await loadNoteWritingGuidance()
-  const transcriptForPrompt = compressTranscriptForGroq(transcript, 5200)
+  const transcriptForPrompt = compressTranscriptForGroq(transcript, 4200)
   const sourceLine = sourceUrl ? `元リンク: ${sourceUrl}` : '元リンク: なし'
   const systemMessage = [
     'あなたはウミノさんの音声配信を、note記事・メルマガ・タイトル案へ編集する日本語編集者です。',
@@ -731,7 +757,7 @@ async function generateAiMarkdownSet({ title, transcript, sourceUrl, basename, c
     apiKey,
     model,
     temperature: 0.35,
-    maxTokens: 4200,
+    maxTokens: 3000,
     messages: [
       { role: 'system', content: `${systemMessage}\n\n必ずJSONだけを返してください。説明文やコードフェンスは禁止です。` },
       {
@@ -748,7 +774,7 @@ async function generateAiMarkdownSet({ title, transcript, sourceUrl, basename, c
           '返却JSON形式:',
           '{',
           '  "keyPoints": "要点抽出Markdown。# 要点抽出: タイトル から始める。重要論点、背景、具体例、読者への示唆を整理。",',
-          '  "noteArticle": "note用ブログ記事Markdown。#タイトルから始める。1200〜2200字程度。文字起こしのコピペではなく、ブログ記事として再構成。記事末尾にハッシュタグ10個。",',
+          '  "noteArticle": "note用ブログ記事Markdown。#タイトルから始める。900〜1500字程度。文字起こしのコピペではなく、ブログ記事として再構成。記事末尾にハッシュタグ10個。",',
           '  "titleCandidates": "タイトル候補Markdown。# タイトル候補: タイトル から始め、候補を10個以上。",',
           '  "newsletter": "メルマガ本文Markdown。件名案、導入、本文、CTAを含める。",',
           '  "summary": "短い生成メモ"',
