@@ -733,13 +733,38 @@ function parseJsonObjectFromText(text) {
   }
 }
 
+async function generateGroqMarkdownPart({ apiKey, model, systemMessage, title, basename, sourceLine, transcriptForPrompt, task, maxTokens }) {
+  return callGroqChat({
+    apiKey,
+    model,
+    temperature: 0.35,
+    maxTokens,
+    messages: [
+      { role: 'system', content: `${systemMessage}\n\nMarkdown本文だけを返してください。説明文やコードフェンスは禁止です。` },
+      {
+        role: 'user',
+        content: [
+          `タイトル: ${title}`,
+          `ファイル名ベース: ${basename}`,
+          sourceLine,
+          '',
+          task,
+          '',
+          '文字起こし:',
+          transcriptForPrompt
+        ].join('\n')
+      }
+    ]
+  })
+}
+
 async function generateAiMarkdownSet({ title, transcript, sourceUrl, basename, config }) {
   const apiKey = config.groqApiKey || process.env.GROQ_API_KEY
   if (!apiKey) throw new Error('Groq APIキーが設定されていません')
 
   const model = config.groqModel || DEFAULT_GROQ_MODEL
   const writingGuidance = await loadNoteWritingGuidance()
-  const transcriptForPrompt = compressTranscriptForGroq(transcript, 2600)
+  const transcriptForPrompt = compressTranscriptForGroq(transcript, 2200)
   const sourceLine = sourceUrl ? `元リンク: ${sourceUrl}` : '元リンク: なし'
   const systemMessage = [
     'あなたはウミノさんの音声配信を、note記事・メルマガ・タイトル案へ編集する日本語編集者です。',
@@ -750,52 +775,86 @@ async function generateAiMarkdownSet({ title, transcript, sourceUrl, basename, c
     writingGuidance
   ].join('\n\n')
 
-  const contentJson = await callGroqChat({
+  const keyPoints = await generateGroqMarkdownPart({
     apiKey,
     model,
-    temperature: 0.35,
-    maxTokens: 1800,
-    messages: [
-      { role: 'system', content: `${systemMessage}\n\n必ずJSONだけを返してください。説明文やコードフェンスは禁止です。` },
-      {
-        role: 'user',
-        content: [
-          `タイトル: ${title}`,
-          `ファイル名ベース: ${basename}`,
-          sourceLine,
-          '',
-          '以下の文字起こしから、まず要点を抽出し、その要点をもとにnote記事・タイトル候補・メルマガ本文を作ってください。',
-          '文字起こしをそのまま貼り付けないでください。読者が読みやすい文章に再構成してください。',
-          'note記事は短い要約ではなく、ブログ記事として自然な導入、見出し、具体例、行動提案を入れてください。ただしGroqの制限に合わせて簡潔にしてください。',
-          '',
-          '返却JSON形式:',
-          '{',
-          '  "keyPoints": "要点抽出Markdown。# 要点抽出: タイトル から始める。重要論点、背景、具体例、読者への示唆を整理。",',
-          '  "noteArticle": "note用ブログ記事Markdown。#タイトルから始める。600〜1000字程度。文字起こしのコピペではなく、ブログ記事として再構成。記事末尾にハッシュタグ10個。",',
-          '  "titleCandidates": "タイトル候補Markdown。# タイトル候補: タイトル から始め、候補を10個以上。",',
-          '  "newsletter": "メルマガ本文Markdown。件名案、導入、本文、CTAを含める。",',
-          '  "summary": "短い生成メモ"',
-          '}',
-          '',
-          '文字起こし:',
-          transcriptForPrompt
-        ].join('\n')
-      }
-    ],
-    responseFormat: { type: 'json_object' }
+    systemMessage,
+    title,
+    basename,
+    sourceLine,
+    transcriptForPrompt,
+    maxTokens: 650,
+    task: [
+      '# 要点抽出を作成してください。',
+      '条件:',
+      '- 見出しは「# 要点抽出: タイトル」から始める。',
+      '- 文字起こしをそのまま貼らず、重要論点、背景、具体例、読者への示唆を箇条書き中心で整理する。',
+      '- 8項目以内で簡潔にまとめる。'
+    ].join('\n')
   })
 
-  const parsed = parseJsonObjectFromText(contentJson)
-  if (!parsed.keyPoints || !parsed.noteArticle || !parsed.titleCandidates || !parsed.newsletter) {
-    throw new Error('Groq APIのJSONに必要な項目がありません')
-  }
+  const noteArticle = await generateGroqMarkdownPart({
+    apiKey,
+    model,
+    systemMessage,
+    title,
+    basename,
+    sourceLine,
+    transcriptForPrompt,
+    maxTokens: 950,
+    task: [
+      '# note用ブログ記事を作成してください。',
+      '条件:',
+      '- 見出しは「# タイトル」から始める。',
+      '- 文字起こしのコピペは禁止。要点をもとにブログ記事として再構成する。',
+      '- 導入、本文3セクション、最後に要点箇条書きと次のアクションを入れる。',
+      '- 600〜1000字程度。',
+      '- 記事末尾に #ウミノ を含むnote向けハッシュタグを10個入れる。'
+    ].join('\n')
+  })
+
+  const titleCandidates = await generateGroqMarkdownPart({
+    apiKey,
+    model,
+    systemMessage,
+    title,
+    basename,
+    sourceLine,
+    transcriptForPrompt,
+    maxTokens: 450,
+    task: [
+      '# タイトル候補を作成してください。',
+      '条件:',
+      '- 見出しは「# タイトル候補: タイトル」から始める。',
+      '- note向けタイトル候補を10個以上出す。',
+      '- 検索されやすいキーワードと、読者がクリックしたくなる表現を分けて整理する。'
+    ].join('\n')
+  })
+
+  const newsletter = await generateGroqMarkdownPart({
+    apiKey,
+    model,
+    systemMessage,
+    title,
+    basename,
+    sourceLine,
+    transcriptForPrompt,
+    maxTokens: 750,
+    task: [
+      '# メルマガ本文を作成してください。',
+      '条件:',
+      '- 件名案、導入、本文、CTAを含める。',
+      '- 読者にそのまま送れる自然な文面にする。',
+      '- 文字起こしのコピペは禁止。'
+    ].join('\n')
+  })
 
   return {
-    keyPoints: String(parsed.keyPoints).trim(),
-    noteArticle: String(parsed.noteArticle).trim(),
-    titleCandidates: String(parsed.titleCandidates).trim(),
-    newsletter: String(parsed.newsletter).trim(),
-    summary: parsed.summary ? String(parsed.summary).trim() : ''
+    keyPoints: String(keyPoints).trim(),
+    noteArticle: String(noteArticle).trim(),
+    titleCandidates: String(titleCandidates).trim(),
+    newsletter: String(newsletter).trim(),
+    summary: 'Groqで4種類のMarkdownを分割生成しました'
   }
 }
 
