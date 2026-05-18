@@ -30,7 +30,13 @@ function registerVoicyPublishHandler({ ipcMain, fs, path, getPageInstance, getAp
       let hashtags = []
       if (hashtagsString && typeof hashtagsString === 'string') {
         // 全角スペースを半角に置換し、カンマもスペースに置換してから分割
-        hashtags = hashtagsString.replace(/、/g, ' ').replace(/,/g, ' ').replace(/　/g, ' ').split(/\s+/).filter(tag => tag.trim() !== '')
+        hashtags = hashtagsString
+          .replace(/、/g, ' ')
+          .replace(/,/g, ' ')
+          .replace(/　/g, ' ')
+          .split(/\s+/)
+          .map(tag => tag.replace(/^#+/, '').trim())
+          .filter(tag => tag !== '')
       }
 
       // 放送タイトルを取得（引数で渡されたもの優先、なければMD、なければファイル名から）

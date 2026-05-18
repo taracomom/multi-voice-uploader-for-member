@@ -667,7 +667,32 @@ async function generateArticle(basename) {
     }
 }
 
-async function fillGeneratedAssets({ titleInputId, descriptionInputId, hashtagsInputId, sourceUrlInputId }) {
+function parseTagList(value) {
+    return String(value || '')
+        .replace(/、/g, ',')
+        .replace(/　/g, ' ')
+        .split(/[,\s]+/)
+        .map(tag => tag.replace(/^#+/, '').trim())
+        .filter(Boolean);
+}
+
+function mergeTagLists(...values) {
+    const tags = [];
+    const seen = new Set();
+
+    for (const value of values) {
+        for (const tag of parseTagList(value)) {
+            const key = tag.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            tags.push(tag);
+        }
+    }
+
+    return tags.join(', ');
+}
+
+async function fillGeneratedAssets({ titleInputId, descriptionInputId, hashtagsInputId, sourceUrlInputId, appendHashtags = false }) {
     const titleInput = document.getElementById(titleInputId);
     const descriptionInput = document.getElementById(descriptionInputId);
     const hashtagsInput = hashtagsInputId ? document.getElementById(hashtagsInputId) : null;
@@ -681,7 +706,11 @@ async function fillGeneratedAssets({ titleInputId, descriptionInputId, hashtagsI
         return;
     }
     if (descriptionInput) descriptionInput.value = result.description;
-    if (hashtagsInput) hashtagsInput.value = result.hashtags;
+    if (hashtagsInput) {
+        hashtagsInput.value = appendHashtags
+            ? mergeTagLists(hashtagsInput.value, result.hashtags)
+            : mergeTagLists(result.hashtags);
+    }
     showToast('タイトルから概要欄を生成しました');
 }
 
@@ -1087,7 +1116,8 @@ function publishToVoicy(basename, initialDate) {
                 titleInputId: 'voicyBroadcastTitle',
                 descriptionInputId: 'voicyDescription',
                 hashtagsInputId: 'voicyHashtags',
-                sourceUrlInputId: 'voicyChapterUrl'
+                sourceUrlInputId: 'voicyChapterUrl',
+                appendHashtags: true
             }));
         }
 
@@ -2140,7 +2170,7 @@ window.openContinuousPublishModal = async function openContinuousPublishModal(ba
                 ? savedStandfmDescription
                 : `${title}\n`;
         document.getElementById('continuousVoicyDescription').value = savedVoicyDescription;
-        document.getElementById('continuousHashtags').value = '';
+        document.getElementById('continuousHashtags').value = mergeTagLists(localStorage.getItem('voicy_default_hashtags') || '');
         document.getElementById('continuousPublishDate').value = dateValue;
         document.getElementById('continuousPublishMode').value = 'schedule';
         document.getElementById('continuousPostVoicy').checked = platformSettings.voicy;
@@ -2155,7 +2185,8 @@ window.openContinuousPublishModal = async function openContinuousPublishModal(ba
             newGenerateBtn.addEventListener('click', async () => {
                 const currentTitle = document.getElementById('continuousBroadcastTitle').value || title;
                 const generated = await ipcRenderer.invoke('generate-title-assets', { title: currentTitle });
-                document.getElementById('continuousHashtags').value = generated.hashtags || '';
+                const hashtagsInput = document.getElementById('continuousHashtags');
+                hashtagsInput.value = mergeTagLists(hashtagsInput.value, generated.hashtags || '');
                 showToast('ハッシュタグを生成しました');
             });
         }

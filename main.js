@@ -370,15 +370,35 @@ function normalizeTextBlock(text) {
 }
 
 function makeTitleTags(title) {
-  const baseWords = String(title || '')
-    .replace(/[【】「」『』（）()［］\[\]!?！？、。,.]/g, ' ')
-    .split(/\s+/)
-    .map(word => word.trim())
-    .filter(word => word.length >= 2)
-    .slice(0, 5)
+  const stopWords = new Set([
+    'です', 'ます', 'こと', 'これ', 'それ', 'ため', 'よう', '今回', '今日', '昨日', '明日',
+    'する', 'した', 'ある', 'いる', 'なる', 'から', 'まで', 'について', 'という', 'そして'
+  ])
+  const source = String(title || '')
+    .replace(/[#＃]/g, '')
+    .replace(/[【】「」『』（）()［］\[\]!?！？、。,.／/｜|:：;；・\-_]/g, ' ')
+  const coarseWords = source.split(/\s+/).map(word => word.trim()).filter(Boolean)
+  const words = []
 
-  const tags = Array.from(new Set([...baseWords, '音声配信']))
-  return tags.join(' ')
+  for (const word of coarseWords) {
+    words.push(word)
+    if (/[\u3040-\u30ff\u3400-\u9fff]/.test(word) && word.length >= 8) {
+      word
+        .split(/(?:について|という|ための|から|まで|なら|して|する|した|できる|できない|の|と|を|が|に|で|は|も|へ|や)/)
+        .map(part => part.trim())
+        .filter(Boolean)
+        .forEach(part => words.push(part))
+    }
+  }
+
+  const baseWords = words
+    .map(word => word.replace(/[^\w\u3040-\u30ff\u3400-\u9fff]/g, '').trim())
+    .filter(word => word.length >= 2 && word.length <= 18)
+    .filter(word => !stopWords.has(word))
+    .slice(0, 8)
+
+  const tags = Array.from(new Set([...baseWords, 'Voicy', '音声配信']))
+  return tags.join(', ')
 }
 
 function makeGeneratedDescription(title, sourceUrl = '') {
@@ -1052,9 +1072,9 @@ ipcMain.handle('transcribe-audio', async (event, basename) => {
     } else if (process.platform === 'darwin') {
       // Macの場合、一般的なPythonパスを試す
       const possiblePaths = [
-        '/usr/bin/python3',
-        '/usr/local/bin/python3',
         '/opt/homebrew/bin/python3',
+        '/usr/local/bin/python3',
+        '/usr/bin/python3',
         'python3'
       ]
 
@@ -1081,10 +1101,10 @@ ipcMain.handle('transcribe-audio', async (event, basename) => {
     console.log(`Audio file: ${audioFilePath}`);
     console.log(`Output dir: ${textDir}`);
 
-    let whisperModel = process.env.VUT_WHISPER_MODEL || 'medium'
+    let whisperModel = process.env.VUT_WHISPER_MODEL || 'small'
     try {
       const config = await fs.pathExists(configPath) ? await fs.readJson(configPath) : {}
-      whisperModel = process.env.VUT_WHISPER_MODEL || config.whisperModel || 'medium'
+      whisperModel = process.env.VUT_WHISPER_MODEL || config.whisperModel || 'small'
     } catch (e) {
       console.warn(`Could not read whisper model config. Using default model: ${whisperModel}`)
     }

@@ -20,7 +20,7 @@ if sys.platform == 'win32':
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 
-def transcribe_audio_file(audio_file_path, output_dir=None, model_name="medium"):
+def transcribe_audio_file(audio_file_path, output_dir=None, model_name="small"):
     """
     単一のオーディオファイルを文字起こし
 
@@ -92,9 +92,9 @@ def main():
     parser = argparse.ArgumentParser(description='ローカルWhisperを使用してオーディオファイルを文字起こし')
     parser.add_argument('input_file', help='入力オーディオファイル')
     parser.add_argument('-o', '--output', help='出力ディレクトリ（指定しない場合は標準出力）')
-    parser.add_argument('-m', '--model', default='medium',
+    parser.add_argument('-m', '--model', default='small',
                         choices=['tiny', 'base', 'small', 'medium', 'large', 'large-v2', 'large-v3'],
-                        help='Whisperモデル名（デフォルト: medium）')
+                        help='Whisperモデル名（デフォルト: small）')
 
     args = parser.parse_args()
 
