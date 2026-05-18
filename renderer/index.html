@@ -1101,7 +1101,7 @@
                     <span class="p-1.5 bg-amber-500/15 text-amber-400 rounded-lg">
                         <i data-lucide="circle-help" class="w-5 h-5"></i>
                     </span>
-                    文字起こしのセットアップ（ffmpeg / Python / Whisper）
+                    文字起こしのセットアップ（Spokenly / Whisper）
                 </h2>
                 <button
                     class="p-1.5 text-slate-400 hover:text-slate-300 hover:bg-slate-800 rounded-full transition-colors"
@@ -1214,7 +1214,7 @@
                         </div>
                     </div>
                     <p class="text-[11px] text-slate-500">
-                        ※ Whisper は内部で PyTorch を使うため、環境によっては初回インストールに時間がかかります。既定では base より高品質で、medium より軽い small モデルをローカルで使います
+                        ※ Spokenly CLI が入っているMacではSpokenlyを優先して使います。失敗した場合だけ、ローカルWhisper smallへ戻します
                     </p>
                 </div>
             </div>

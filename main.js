@@ -413,6 +413,97 @@ function makeGeneratedDescription(title, sourceUrl = '') {
   return lines.join('\n').trim()
 }
 
+function findExecutableInPath(commandName, searchPath) {
+  const pathEntries = String(searchPath || '')
+    .split(path.delimiter)
+    .filter(Boolean)
+
+  for (const dir of pathEntries) {
+    const candidate = path.join(dir, commandName)
+    try {
+      if (fs.existsSync(candidate)) return candidate
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  return null
+}
+
+function runProcessCollectOutput(command, args, options = {}) {
+  return new Promise((resolve) => {
+    const { timeoutMs = 0, ...spawnOptions } = options
+    const child = spawn(command, args, spawnOptions)
+    let stdout = ''
+    let stderr = ''
+    let timedOut = false
+    const timer = timeoutMs > 0 ? setTimeout(() => {
+      timedOut = true
+      try {
+        child.kill('SIGTERM')
+      } catch (e) {
+        // ignore
+      }
+    }, timeoutMs) : null
+
+    child.stdout.on('data', data => {
+      stdout += Buffer.isBuffer(data) ? data.toString('utf8') : String(data)
+    })
+    child.stderr.on('data', data => {
+      stderr += Buffer.isBuffer(data) ? data.toString('utf8') : String(data)
+    })
+    child.on('error', error => {
+      if (timer) clearTimeout(timer)
+      resolve({ success: false, code: null, stdout, stderr: `${stderr}\n${error.message}`.trim(), timedOut })
+    })
+    child.on('close', code => {
+      if (timer) clearTimeout(timer)
+      resolve({ success: code === 0 && !timedOut, code, stdout, stderr, timedOut })
+    })
+  })
+}
+
+async function transcribeWithSpokenlyCli(audioFilePath, outputFilePath, enhancedPath) {
+  if (process.platform !== 'darwin') {
+    return { success: false, message: 'Spokenly CLI is only available on macOS' }
+  }
+
+  const spokenlyCmd = findExecutableInPath('spokenly', enhancedPath) || '/usr/local/bin/spokenly'
+  if (!fs.existsSync(spokenlyCmd)) {
+    return { success: false, message: 'Spokenly CLI is not installed' }
+  }
+
+  console.log(`Using Spokenly CLI: ${spokenlyCmd}`)
+  const result = await runProcessCollectOutput(
+    spokenlyCmd,
+    ['transcribe', audioFilePath, '--format', 'text'],
+    {
+      env: {
+        ...process.env,
+        PATH: enhancedPath
+      },
+      timeoutMs: 30 * 60 * 1000
+    }
+  )
+
+  const transcript = normalizeTextBlock(result.stdout)
+  if (result.success && transcript) {
+    await fs.writeFile(outputFilePath, transcript, 'utf8')
+    return {
+      success: true,
+      message: 'Transcription completed with Spokenly CLI',
+      outputPath: outputFilePath,
+      stdout: result.stdout,
+      stderr: result.stderr
+    }
+  }
+
+  const reason = result.timedOut
+    ? 'Spokenly CLI timed out'
+    : (result.stderr || result.stdout || `Spokenly CLI exited with code ${result.code}`)
+  return { success: false, message: reason, stdout: result.stdout, stderr: result.stderr, exitCode: result.code }
+}
+
 function splitTranscriptIntoParagraphs(text) {
   const normalized = normalizeTextBlock(text)
   if (!normalized) return []
@@ -1102,12 +1193,15 @@ ipcMain.handle('transcribe-audio', async (event, basename) => {
     console.log(`Output dir: ${textDir}`);
 
     let whisperModel = process.env.VUT_WHISPER_MODEL || 'small'
+    let transcriptionProvider = process.env.VUT_TRANSCRIBE_PROVIDER || (process.platform === 'darwin' ? 'spokenly' : 'whisper')
     try {
       const config = await fs.pathExists(configPath) ? await fs.readJson(configPath) : {}
       whisperModel = process.env.VUT_WHISPER_MODEL || config.whisperModel || 'small'
+      transcriptionProvider = process.env.VUT_TRANSCRIBE_PROVIDER || config.transcriptionProvider || transcriptionProvider
     } catch (e) {
       console.warn(`Could not read whisper model config. Using default model: ${whisperModel}`)
     }
+    console.log(`Transcription provider: ${transcriptionProvider}`);
     console.log(`Whisper model: ${whisperModel}`);
 
     // Pythonのバージョンとパスを確認（デバッグ用）
@@ -1204,6 +1298,16 @@ ipcMain.handle('transcribe-audio', async (event, basename) => {
 
     console.log(`Enhanced PATH: ${enhancedPath}`);
     console.log(`System PATH: ${systemPath}`);
+
+    if (transcriptionProvider !== 'whisper') {
+      console.log('Trying Spokenly CLI transcription first...')
+      const spokenlyResult = await transcribeWithSpokenlyCli(audioFilePath, outputFilePath, enhancedPath)
+      if (spokenlyResult.success) {
+        console.log('Spokenly CLI transcription completed successfully')
+        return spokenlyResult
+      }
+      console.warn(`Spokenly CLI transcription failed. Falling back to Whisper: ${spokenlyResult.message}`)
+    }
 
     return new Promise((resolve) => {
       // パスを絶対パスに変換して正規化（Windowsのパス問題を回避）
