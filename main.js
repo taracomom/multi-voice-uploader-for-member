@@ -565,10 +565,9 @@ function splitTranscriptIntoParagraphs(text) {
 
 function getGeneratedMarkdownFiles(basename) {
   return {
+    cleanedTranscript: path.join(mdDir, basename + '_cleaned_transcript.md'),
     noteArticle: path.join(mdDir, basename + '.md'),
-    keyPoints: path.join(mdDir, basename + '_key_points.md'),
-    titleCandidates: path.join(mdDir, basename + '_title_candidates.md'),
-    newsletter: path.join(mdDir, basename + '_newsletter.md')
+    keyPoints: path.join(mdDir, basename + '_key_points.md')
   }
 }
 
@@ -617,17 +616,23 @@ async function readTextIfExists(filePath, maxLength) {
 }
 
 async function loadNoteWritingGuidance() {
+  const noteRules = await readTextIfExists(NOTE_RULES_PATH, 4500)
+  const aboutUmino = await readTextIfExists(ABOUT_UMINO_PATH, 1200)
+  const styleSample = await readTextIfExists(NOTE_STYLE_SAMPLE_PATH, 1200)
   return [
-    'ウミノ式note記事ルール要約:',
-    '- 一人称は「わたし」。40代以上の働く女性に「あなた」と語りかける。',
-    '- 親しみやすい丁寧語。弱みや本音は、音声にある場合だけ入れる。捏造禁止。',
-    '- H1-H3のみ。H4以上、テーブル、太字、HTMLは禁止。',
-    '- 「でかい」「そして」「それから」「〜んですよね」「〜んですけど」は使わない。',
-    '- 「で、」で段落を始めない。辞書形・可能形・否定形の言い切りで終えない。',
-    '- note記事は、導入、本文3〜5セクション、最後に要点箇条書きと次のアクション。',
-    '- 記事末尾に #ウミノ を含むnote向けハッシュタグを10個入れる。',
-    '- メルマガは件名案、導入、本文、CTAを入れる。'
-  ].filter(Boolean).join('\n')
+    'ウミノ式note記事ルール:',
+    noteRules || [
+      '- 一人称は「わたし」。40代以上の働く女性に「あなた」と語りかける。',
+      '- 親しみやすい丁寧語。弱みや本音は、音声にある場合だけ入れる。捏造禁止。',
+      '- H1-H3のみ。H4以上、テーブル、太字、HTMLは禁止。',
+      '- 「でかい」「そして」「それから」「〜んですよね」「〜んですけど」は使わない。',
+      '- 「で、」で段落を始めない。辞書形・可能形・否定形の言い切りで終えない。',
+      '- 導入、本文3〜7セクション、最後に要点箇条書きと次のアクション。',
+      '- 記事末尾に #ウミノ を含むnote向けハッシュタグを10個入れる。'
+    ].join('\n'),
+    aboutUmino ? `ウミノ共通プロフィール・文体ルール:\n${aboutUmino}` : '',
+    styleSample ? `参考文体の短い抜粋:\n${styleSample}` : ''
+  ].filter(Boolean).join('\n\n')
 }
 
 function postJson(urlString, body, headers = {}, timeoutMs = 120000) {
@@ -766,38 +771,89 @@ async function generateGroqMarkdownPart({ apiKey, model, systemMessage, title, b
   })
 }
 
+function applyUminoTranscriptReplacements(text) {
+  return normalizeTextBlock(text)
+    .replace(/裏声/g, '裏ボイ')
+    .replace(/ボイシー|ヴォイシー|Voicy/gi, 'Voicy')
+    .replace(/スタエフ|stand\s*fm|stand\.fm/gi, 'stand.fm')
+    .replace(/スポティファイ|Spotify/gi, 'Spotify')
+    .replace(/サブスタック|サブスタ|Substack/gi, 'Substack')
+    .replace(/チャットGPT|ChatGPT/gi, 'ChatGPT')
+    .replace(/ユーデミー|ユーデミ|Udemy/gi, 'Udemy')
+    .replace(/ノート|note/gi, 'note')
+    .replace(/メイク|Make/gi, 'Make')
+    .replace(/プロトンドライブ|Proton Drive/gi, 'Proton Drive')
+    .replace(/プロトン/g, 'Proton')
+}
+
+function removePodcastBoilerplate(text) {
+  return applyUminoTranscriptReplacements(text)
+    .replace(/^.{0,240}?(?:40\s*歳\s*から\s*の\s*AI\s*活用\s*塾|AI\s*活用\s*塾\s*の\s*ウミノ|AI\s*活用\s*塾\s*の\s*海野).{0,360}?(?:お届けしていきます|お届けします|話をしたいと思います|話していきます)[。．、,\s]*/i, '')
+    .replace(/(?:それではまた|ではまた|またお会いしましょう|ウミノでした|海野でした)[\s\S]{0,240}$/i, '')
+    .replace(/(?:ウミノAIとマーケティング|ウミノソング|AIとマーケティング)[\s\S]{0,240}$/i, '')
+    .trim()
+}
+
 async function generateAiMarkdownSet({ title, transcript, sourceUrl, basename, config }) {
   const apiKey = config.groqApiKey || process.env.GROQ_API_KEY
   if (!apiKey) throw new Error('Groq APIキーが設定されていません')
 
   const model = config.groqModel || DEFAULT_GROQ_MODEL
   const writingGuidance = await loadNoteWritingGuidance()
-  const transcriptForPrompt = compressTranscriptForGroq(transcript, 2200)
+  const transcriptForPrompt = compressTranscriptForGroq(removePodcastBoilerplate(transcript), 3200)
   const sourceLine = sourceUrl ? `元リンク: ${sourceUrl}` : '元リンク: なし'
-  const systemMessage = [
-    'あなたはウミノさんの音声配信を、note記事・メルマガ・タイトル案へ編集する日本語編集者です。',
+  const cleanupSystemMessage = [
+    'あなたは日本語音声文字起こしの編集者です。',
+    '内容を要約せず、話している順番と情報量を保ったまま、読みやすい日本語に整えてください。',
+    '音声にない事実、数値、体験談は追加しないでください。'
+  ].join('\n\n')
+  const articleSystemMessage = [
+    'あなたはウミノさんの音声配信をnote記事へ編集する日本語編集者です。',
     '音声内容にない事実、数値、体験談は捏造しないでください。',
     'Markdownはnote向け制約を守ってください。H4以上、テーブル、太字記法は禁止です。',
-    '必ず要点を抽出してから、その要点をもとにブログ記事形式へ編集してください。文字起こしのコピペは禁止です。',
     '口調・構成・禁止語は以下のルールを守ってください。',
     writingGuidance
   ].join('\n\n')
 
-  const keyPoints = await generateGroqMarkdownPart({
+  const cleanedTranscript = await generateGroqMarkdownPart({
     apiKey,
     model,
-    systemMessage,
+    systemMessage: cleanupSystemMessage,
     title,
     basename,
     sourceLine,
     transcriptForPrompt,
+    maxTokens: 1800,
+    task: [
+      '# 文字起こしを整形してください。',
+      '条件:',
+      '- 冒頭の定型自己紹介、チャンネル説明、末尾の挨拶、末尾ソング由来の文言は削除する。',
+      '- 「40歳からのAI活用塾のウミノです」などの冒頭定型句は記事本文には不要なので削除する。',
+      '- 「ウミノAIとマーケティング」など末尾ソング由来の語句は削除する。',
+      '- 表記ゆれを直す。例: 裏声→裏ボイ、ボイシー→Voicy、スタエフ→stand.fm、サブスタック/サブスタ→Substack、ユーデミー→Udemy。',
+      '- 句読点と段落を整え、読みやすい文字起こしにする。',
+      '- 要約しない。重要な話題、例、感情、注意点を落とさない。',
+      '- Markdown本文だけ返す。見出しは「# 整形済み文字起こし: タイトル」から始める。'
+    ].join('\n')
+  })
+  await sleep(3000)
+
+  const keyPoints = await generateGroqMarkdownPart({
+    apiKey,
+    model,
+    systemMessage: cleanupSystemMessage,
+    title,
+    basename,
+    sourceLine,
+    transcriptForPrompt: cleanedTranscript,
     maxTokens: 650,
     task: [
       '# 要点抽出を作成してください。',
       '条件:',
       '- 見出しは「# 要点抽出: タイトル」から始める。',
-      '- 文字起こしをそのまま貼らず、重要論点、背景、具体例、読者への示唆を箇条書き中心で整理する。',
-      '- 8項目以内で簡潔にまとめる。'
+      '- 整形済み文字起こしから、重要論点、背景、具体例、読者への示唆を抽出する。',
+      '- 文字起こしをそのまま貼らない。',
+      '- 話している内容を過不足なく記事化するための材料として整理する。'
     ].join('\n')
   })
   await sleep(3000)
@@ -805,67 +861,35 @@ async function generateAiMarkdownSet({ title, transcript, sourceUrl, basename, c
   const noteArticle = await generateGroqMarkdownPart({
     apiKey,
     model,
-    systemMessage,
+    systemMessage: articleSystemMessage,
     title,
     basename,
     sourceLine,
-    transcriptForPrompt,
-    maxTokens: 950,
+    transcriptForPrompt: [
+      '整形済み文字起こし:',
+      cleanedTranscript,
+      '',
+      '要点:',
+      keyPoints
+    ].join('\n'),
+    maxTokens: 2600,
     task: [
       '# note用ブログ記事を作成してください。',
       '条件:',
       '- 見出しは「# タイトル」から始める。',
-      '- 文字起こしのコピペは禁止。要点をもとにブログ記事として再構成する。',
-      '- 導入、本文3セクション、最後に要点箇条書きと次のアクションを入れる。',
-      '- 600〜1000字程度。',
-      '- 記事末尾に #ウミノ を含むnote向けハッシュタグを10個入れる。'
-    ].join('\n')
-  })
-  await sleep(3000)
-
-  const titleCandidates = await generateGroqMarkdownPart({
-    apiKey,
-    model,
-    systemMessage,
-    title,
-    basename,
-    sourceLine,
-    transcriptForPrompt,
-    maxTokens: 450,
-    task: [
-      '# タイトル候補を作成してください。',
-      '条件:',
-      '- 見出しは「# タイトル候補: タイトル」から始める。',
-      '- note向けタイトル候補を10個以上出す。',
-      '- 検索されやすいキーワードと、読者がクリックしたくなる表現を分けて整理する。'
-    ].join('\n')
-  })
-  await sleep(3000)
-
-  const newsletter = await generateGroqMarkdownPart({
-    apiKey,
-    model,
-    systemMessage,
-    title,
-    basename,
-    sourceLine,
-    transcriptForPrompt,
-    maxTokens: 750,
-    task: [
-      '# メルマガ本文を作成してください。',
-      '条件:',
-      '- 件名案、導入、本文、CTAを含める。',
-      '- 読者にそのまま送れる自然な文面にする。',
-      '- 文字起こしのコピペは禁止。'
+      '- 文字起こしのコピペは禁止。要点と整形済み文字起こしをもとに、note記事として自然に再構成する。',
+      '- 文字数は指定しない。話した内容を過不足なく記事にする。',
+      '- 冒頭のポッドキャスト定型自己紹介と末尾ソング由来の文言は入れない。',
+      '- 導入、本文3〜7セクション、最後に要点箇条書きと次のアクションを入れる。',
+      '- note記事ルールの固定フッターとハッシュタグを入れる。'
     ].join('\n')
   })
 
   return {
+    cleanedTranscript: String(cleanedTranscript).trim(),
     keyPoints: String(keyPoints).trim(),
     noteArticle: String(noteArticle).trim(),
-    titleCandidates: String(titleCandidates).trim(),
-    newsletter: String(newsletter).trim(),
-    summary: 'Groqで4種類のMarkdownを分割生成しました'
+    summary: 'Groqで整形済み文字起こし、要点、note記事を順番に生成しました'
   }
 }
 
@@ -910,24 +934,6 @@ function buildKeyPointsMarkdown({ title, transcript, sourceUrl }) {
   return `# 要点抽出: ${title}\n\n## 要点\n\n${bullets}${sourceBlock}\n`
 }
 
-function buildTitleCandidatesMarkdown({ title, transcript }) {
-  const keywords = extractKeywordCandidates(title, transcript)
-  const lead = pickImportantSentences(transcript, 3)
-  const keywordText = keywords.length > 0 ? keywords.join(' / ') : '音声配信'
-  const titles = Array.from(new Set([
-    title,
-    `${title}で考えたこと`,
-    `${title}から見えた大事なポイント`,
-    `なぜ${title}が大切なのか`,
-    `${keywords[0] || title}を続けるために必要なこと`,
-    `${keywords[0] || title}の気づきと実践メモ`,
-    `${keywords[1] || '日々の学び'}を変える${keywords[0] || title}の話`,
-    lead[0] ? trimText(lead[0].replace(/[。！？!?]$/, ''), 42) : ''
-  ].filter(Boolean))).slice(0, 8)
-
-  return `# タイトル候補: ${title}\n\n## 候補\n\n${titles.map((candidate, index) => `${index + 1}. ${candidate}`).join('\n')}\n\n## キーワード\n\n${keywordText}\n\n## ハッシュタグ案\n\n${makeTitleTags(title)}\n`
-}
-
 function buildNoteArticleMarkdown({ title, transcript, sourceUrl }) {
   const paragraphs = splitTranscriptIntoParagraphs(transcript)
   const intro = paragraphs[0] || ''
@@ -937,25 +943,11 @@ function buildNoteArticleMarkdown({ title, transcript, sourceUrl }) {
   return `# ${title}\n\n## はじめに\n\n${intro}\n\n## 本文\n\n${body}${sourceBlock}\n\n## まとめ\n\n今回の内容をもとに、日々の行動や判断に活かせるポイントを整理しました。\n`
 }
 
-function buildNewsletterMarkdown({ title, transcript, sourceUrl }) {
-  const points = pickImportantSentences(transcript, 5)
-  const intro = splitTranscriptIntoParagraphs(transcript)[0] || ''
-  const sourceLine = sourceUrl ? `\n\n音声はこちら:\n${sourceUrl}` : ''
-  const bulletBlock = points.map(point => `- ${point}`).join('\n')
-
-  return `# メルマガ本文: ${title}\n\n件名案: ${title}\n\nこんにちは、海野です。\n\n${intro}\n\n今回のポイントは、次の通りです。\n\n${bulletBlock}\n\n本文では、この内容をもう少し具体的に振り返りました。音声で話したことをそのまま流すのではなく、あとから読み返して行動に移しやすい形で整理しています。${sourceLine}\n\nそれでは、今日もよろしくお願いします。\n`
-}
-
 function buildCombinedMarkdownSet(files) {
-  return [
-    files.keyPoints.content,
-    '---',
-    files.noteArticle.content,
-    '---',
-    files.titleCandidates.content,
-    '---',
-    files.newsletter.content
-  ].join('\n\n')
+  return Object.values(files)
+    .filter(file => file && file.content && file.content.trim())
+    .map(file => file.content.trim())
+    .join('\n\n---\n\n')
 }
 
 ipcMain.handle('generate-title-assets', async (event, { title, sourceUrl } = {}) => {
@@ -1000,25 +992,20 @@ ipcMain.handle('generate-article-md', async (event, basename, options = {}) => {
     }
 
     const files = {
+      cleanedTranscript: {
+        label: '整形済み文字起こし',
+        path: paths.cleanedTranscript,
+        content: aiContent ? aiContent.cleanedTranscript : `# 整形済み文字起こし: ${title}\n\n${removePodcastBoilerplate(transcript)}\n`
+      },
       keyPoints: {
         label: '要点抽出',
         path: paths.keyPoints,
-        content: aiContent ? aiContent.keyPoints : buildKeyPointsMarkdown({ title, transcript, sourceUrl })
+        content: aiContent ? aiContent.keyPoints : buildKeyPointsMarkdown({ title, transcript: removePodcastBoilerplate(transcript), sourceUrl })
       },
       noteArticle: {
         label: 'note記事',
         path: paths.noteArticle,
-        content: aiContent ? aiContent.noteArticle : buildNoteArticleMarkdown({ title, transcript, sourceUrl })
-      },
-      titleCandidates: {
-        label: 'タイトル候補',
-        path: paths.titleCandidates,
-        content: aiContent ? aiContent.titleCandidates : buildTitleCandidatesMarkdown({ title, transcript })
-      },
-      newsletter: {
-        label: 'メルマガ本文',
-        path: paths.newsletter,
-        content: aiContent ? aiContent.newsletter : buildNewsletterMarkdown({ title, transcript, sourceUrl })
+        content: aiContent ? aiContent.noteArticle : buildNoteArticleMarkdown({ title, transcript: removePodcastBoilerplate(transcript), sourceUrl })
       }
     }
     const combinedContent = buildCombinedMarkdownSet(files)
@@ -1058,6 +1045,11 @@ ipcMain.handle('read-generated-md', async (event, basename) => {
     await ensureDirectories()
     const paths = getGeneratedMarkdownFiles(basename)
     const files = {
+      cleanedTranscript: {
+        label: '整形済み文字起こし',
+        path: paths.cleanedTranscript,
+        content: await fs.pathExists(paths.cleanedTranscript) ? await fs.readFile(paths.cleanedTranscript, 'utf8') : ''
+      },
       keyPoints: {
         label: '要点抽出',
         path: paths.keyPoints,
@@ -1067,16 +1059,6 @@ ipcMain.handle('read-generated-md', async (event, basename) => {
         label: 'note記事',
         path: paths.noteArticle,
         content: await fs.pathExists(paths.noteArticle) ? await fs.readFile(paths.noteArticle, 'utf8') : ''
-      },
-      titleCandidates: {
-        label: 'タイトル候補',
-        path: paths.titleCandidates,
-        content: await fs.pathExists(paths.titleCandidates) ? await fs.readFile(paths.titleCandidates, 'utf8') : ''
-      },
-      newsletter: {
-        label: 'メルマガ本文',
-        path: paths.newsletter,
-        content: await fs.pathExists(paths.newsletter) ? await fs.readFile(paths.newsletter, 'utf8') : ''
       }
     }
     const existingFiles = Object.fromEntries(Object.entries(files).filter(([, file]) => file.content.trim()))
