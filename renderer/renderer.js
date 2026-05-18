@@ -4,6 +4,7 @@ let audioFiles = [];
 let metadata = {};
 let currentEditingFile = null;
 let selectedYearMonth = null; // 選択された年月を記録
+const mdGenerationInProgress = new Set();
 let platformSettings = {
     standfm: true,
     voicy: true,
@@ -441,7 +442,7 @@ function createFileItem(file) {
             <button class="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-indigo-400 rounded-md transition-all shadow-sm hover:shadow" onclick="downloadTranscription('${file.basename}')" title="テキストファイルをダウンロード">
                 <i data-lucide="download" class="w-3.5 h-3.5"></i>
             </button>
-            <button class="px-2.5 py-1.5 ${file.hasMd ? 'bg-blue-500/10 text-blue-400' : 'bg-slate-900 text-slate-400 hover:text-blue-400'} rounded-md text-xs font-bold flex items-center gap-1.5 shadow-sm border border-slate-700 hover:border-blue-500/40 transition-all" onclick="generateArticle('${file.basename}')" title="要点・note記事・タイトル候補・メルマガ本文のMarkdownを作成">
+            <button class="px-2.5 py-1.5 ${file.hasMd ? 'bg-blue-500/10 text-blue-400' : 'bg-slate-900 text-slate-400 hover:text-blue-400'} rounded-md text-xs font-bold flex items-center gap-1.5 shadow-sm border border-slate-700 hover:border-blue-500/40 transition-all" onclick="generateArticle('${file.basename}', this)" title="要点・note記事・タイトル候補・メルマガ本文のMarkdownを作成">
                 <i data-lucide="${file.hasMd ? 'file-check-2' : 'file-pen-line'}" class="w-3.5 h-3.5"></i>
                 ${file.hasMd ? 'MD済' : 'MD作成'}
             </button>
@@ -647,7 +648,24 @@ async function transcribeAudio(filename, options = {}) {
     }
 }
 
-async function generateArticle(basename) {
+async function generateArticle(basename, button = null) {
+    if (mdGenerationInProgress.has(basename)) {
+        showToast('MD作成はすでに実行中です。Groqの制限で数分かかることがあります。', 'error');
+        return;
+    }
+
+    const originalHTML = button ? button.innerHTML : '';
+    mdGenerationInProgress.add(basename);
+    if (button) {
+        button.disabled = true;
+        button.innerHTML = `
+            <i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i>
+            MD作成中
+        `;
+        lucide.createIcons();
+    }
+    showToast('MD作成を開始しました。Groqの制限に当たる場合は自動で待って再試行します。');
+
     try {
         const file = audioFiles.find(f => f.basename === basename);
         const result = await ipcRenderer.invoke('generate-article-md', basename, {
@@ -663,7 +681,14 @@ async function generateArticle(basename) {
         }
     } catch (error) {
         console.error('Markdown作成エラー:', error);
-        showToast('Markdown作成に失敗しました', 'error');
+        showToast(`Markdown作成に失敗しました: ${error.message || '不明なエラー'}`, 'error');
+    } finally {
+        mdGenerationInProgress.delete(basename);
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = originalHTML;
+            lucide.createIcons();
+        }
     }
 }
 

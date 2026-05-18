@@ -792,6 +792,7 @@ async function generateAiMarkdownSet({ title, transcript, sourceUrl, basename, c
       '- 8項目以内で簡潔にまとめる。'
     ].join('\n')
   })
+  await sleep(3000)
 
   const noteArticle = await generateGroqMarkdownPart({
     apiKey,
@@ -812,6 +813,7 @@ async function generateAiMarkdownSet({ title, transcript, sourceUrl, basename, c
       '- 記事末尾に #ウミノ を含むnote向けハッシュタグを10個入れる。'
     ].join('\n')
   })
+  await sleep(3000)
 
   const titleCandidates = await generateGroqMarkdownPart({
     apiKey,
@@ -830,6 +832,7 @@ async function generateAiMarkdownSet({ title, transcript, sourceUrl, basename, c
       '- 検索されやすいキーワードと、読者がクリックしたくなる表現を分けて整理する。'
     ].join('\n')
   })
+  await sleep(3000)
 
   const newsletter = await generateGroqMarkdownPart({
     apiKey,
