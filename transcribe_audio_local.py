@@ -20,7 +20,7 @@ if sys.platform == 'win32':
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 
-def transcribe_audio_file(audio_file_path, output_dir=None, model_name="base"):
+def transcribe_audio_file(audio_file_path, output_dir=None, model_name="medium"):
     """
     単一のオーディオファイルを文字起こし
 
@@ -56,7 +56,15 @@ def transcribe_audio_file(audio_file_path, output_dir=None, model_name="base"):
         model = whisper.load_model(model_name)
 
         print(f"文字起こしを実行中: {audio_file_path}")
-        result = model.transcribe(audio_file_path, language="ja")
+        result = model.transcribe(
+            audio_file_path,
+            language="ja",
+            task="transcribe",
+            temperature=0,
+            beam_size=5,
+            condition_on_previous_text=False,
+            initial_prompt="これは日本語の音声配信です。専門用語や固有名詞をできるだけ正確に文字起こししてください。裏ボイ、Voicy、stand.fm、Spotify、note、メルマガ、AI、ChatGPT、Whisper。"
+        )
 
         transcript_text = result["text"].strip()
 
@@ -84,9 +92,9 @@ def main():
     parser = argparse.ArgumentParser(description='ローカルWhisperを使用してオーディオファイルを文字起こし')
     parser.add_argument('input_file', help='入力オーディオファイル')
     parser.add_argument('-o', '--output', help='出力ディレクトリ（指定しない場合は標準出力）')
-    parser.add_argument('-m', '--model', default='base',
-                        choices=['tiny', 'base', 'small', 'medium', 'large'],
-                        help='Whisperモデル名（デフォルト: base）')
+    parser.add_argument('-m', '--model', default='medium',
+                        choices=['tiny', 'base', 'small', 'medium', 'large', 'large-v2', 'large-v3'],
+                        help='Whisperモデル名（デフォルト: medium）')
 
     args = parser.parse_args()
 
@@ -109,4 +117,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

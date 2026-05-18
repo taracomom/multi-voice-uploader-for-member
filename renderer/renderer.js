@@ -449,7 +449,7 @@ function createFileItem(file) {
         `<div class="flex items-center gap-2">
             <button class="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-bold transition-all shadow-md shadow-amber-500/10 hover:shadow-amber-500/20 flex items-center gap-1.5 group transform hover:-translate-y-0.5 active:translate-y-0" onclick="transcribeAudio('${file.filename}')" title="文字起こし実行">
                 <i data-lucide="mic" class="w-3.5 h-3.5 group-hover:animate-pulse"></i>
-                文字起こし実行
+                Whisper文字起こし
             </button>
             <button class="p-2 bg-slate-900 border border-slate-700 text-slate-400 hover:text-amber-400 hover:border-amber-500/40 hover:bg-amber-500/10 rounded-lg transition-all shadow-sm hover:shadow-md" onclick="onClickOpenTranscribeHelpModal()" title="文字起こしのセットアップ方法">
                 <i data-lucide="circle-help" class="w-4 h-4"></i>
@@ -491,8 +491,8 @@ function createFileItem(file) {
             Spotify投稿
         </button>`) : ''
 
-    const continuousButton = (platformSettings.standfm && platformSettings.voicy) ?
-        `<button class="w-[130px] flex justify-center px-3 py-1.5 bg-blue-600/20 border border-blue-500/30 text-blue-300 hover:text-white hover:bg-blue-600 rounded-lg text-xs font-bold transition-all shadow-sm hover:shadow-md flex items-center gap-1.5 group" onclick="publishStandfmThenVoicy('${file.basename}', '${file.publishDate || ''}')" title="stand.fmに投稿後、Voicyにも続けて投稿">
+    const continuousButton = platformSettings.standfm ?
+        `<button class="w-[130px] flex justify-center px-3 py-1.5 bg-blue-600/20 border border-blue-500/30 text-blue-300 hover:text-white hover:bg-blue-600 rounded-lg text-xs font-bold transition-all shadow-sm hover:shadow-md flex items-center gap-1.5 group" onclick="openContinuousPublishModal('${file.basename}', '${file.publishDate || ''}')" title="stand.fmに投稿後、選択した投稿先にも続けて投稿">
             <i data-lucide="workflow" class="w-3.5 h-3.5"></i>
             連続投稿
         </button>` : ''
@@ -2107,24 +2107,119 @@ async function getTitleForFile(basename) {
     return (file && file.title) || basename.replace(/^\d{8}_/, '');
 }
 
-async function publishStandfmThenVoicy(basename, initialDate) {
-    if (!confirm('stand.fmに投稿後、続けてVoicyにも投稿します。開始しますか？')) {
-        return;
+function getPublishDateValue(basename, initialDate) {
+    if (initialDate && !isNaN(new Date(initialDate).getTime())) {
+        const d = new Date(initialDate);
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     }
 
-    try {
-        const title = await getTitleForFile(basename);
-        const generated = await ipcRenderer.invoke('generate-title-assets', { title });
-        const standfmDescription = generated.description || title;
-        const { chapterTitle, chapterUrl } = extractVoicyPartFromStandfmDescription(standfmDescription);
+    const dateMatch = basename.match(/^(\d{4})(\d{2})(\d{2})/);
+    if (dateMatch) return `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
 
-        const publishDate = initialDate || '';
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
+}
+
+let currentContinuousTargetFile = null;
+
+window.openContinuousPublishModal = async function openContinuousPublishModal(basename, initialDate) {
+    try {
+        currentContinuousTargetFile = basename;
+        const title = await getTitleForFile(basename);
+        const modal = document.getElementById('continuousPublishModal');
+        if (!modal) return;
+
+        const savedStandfmDescription = await ipcRenderer.invoke('get-config', 'standfmDefaultDescription');
+        const savedVoicyDescription = localStorage.getItem('voicy_default_description') || '';
+        const dateValue = getPublishDateValue(basename, initialDate);
+
+        document.getElementById('continuousBroadcastTitle').value = title;
+        document.getElementById('continuousStandfmDescription').value =
+            savedStandfmDescription !== null && savedStandfmDescription !== undefined
+                ? savedStandfmDescription
+                : `${title}\n`;
+        document.getElementById('continuousVoicyDescription').value = savedVoicyDescription;
+        document.getElementById('continuousHashtags').value = '';
+        document.getElementById('continuousPublishDate').value = dateValue;
+        document.getElementById('continuousPublishMode').value = 'schedule';
+        document.getElementById('continuousPostVoicy').checked = platformSettings.voicy;
+        document.getElementById('continuousPostVoicy').disabled = !platformSettings.voicy;
+        document.getElementById('continuousPostSpotify').checked = false;
+        document.getElementById('continuousPostSpotify').disabled = !platformSettings.spotify;
+
+        const generateBtn = document.getElementById('generateContinuousHashtagsBtn');
+        if (generateBtn) {
+            const newGenerateBtn = generateBtn.cloneNode(true);
+            generateBtn.parentNode.replaceChild(newGenerateBtn, generateBtn);
+            newGenerateBtn.addEventListener('click', async () => {
+                const currentTitle = document.getElementById('continuousBroadcastTitle').value || title;
+                const generated = await ipcRenderer.invoke('generate-title-assets', { title: currentTitle });
+                document.getElementById('continuousHashtags').value = generated.hashtags || '';
+                showToast('ハッシュタグを生成しました');
+            });
+        }
+
+        const confirmBtn = document.getElementById('confirmContinuousPublishBtn');
+        if (confirmBtn) {
+            const newConfirmBtn = confirmBtn.cloneNode(true);
+            confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+            newConfirmBtn.addEventListener('click', executeContinuousPublish);
+        }
+
+        modal.classList.remove('opacity-0', 'pointer-events-none');
+        lucide.createIcons();
+    } catch (error) {
+        console.error('連続投稿モーダル表示エラー:', error);
+        showToast('連続投稿設定を開けませんでした: ' + error.message, 'error');
+    }
+}
+
+window.closeContinuousPublishModal = function closeContinuousPublishModal() {
+    const modal = document.getElementById('continuousPublishModal');
+    if (modal) {
+        modal.classList.add('opacity-0', 'pointer-events-none');
+        currentContinuousTargetFile = null;
+    }
+}
+
+async function executeContinuousPublish() {
+    if (!currentContinuousTargetFile) return;
+
+    const basename = currentContinuousTargetFile;
+    const button = document.getElementById('confirmContinuousPublishBtn');
+    const originalHTML = button ? button.innerHTML : '';
+
+    try {
+        const title = document.getElementById('continuousBroadcastTitle').value || await getTitleForFile(basename);
+        const standfmDescription = document.getElementById('continuousStandfmDescription').value || '';
+        const { chapterTitle, chapterUrl } = extractVoicyPartFromStandfmDescription(standfmDescription);
+        const publishDate = document.getElementById('continuousPublishDate').value || '';
+        const publishMode = document.getElementById('continuousPublishMode').value || 'schedule';
+        const postVoicy = document.getElementById('continuousPostVoicy').checked;
+        const postSpotify = document.getElementById('continuousPostSpotify').checked;
+        const voicyDescription = document.getElementById('continuousVoicyDescription').value || '';
+        const hashtags = document.getElementById('continuousHashtags').value || '';
+
+        if (!postVoicy && !postSpotify) {
+            showToast('続けて投稿する先を1つ以上選んでください', 'error');
+            return;
+        }
+
+        if (button) {
+            button.disabled = true;
+            button.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>投稿中...';
+            lucide.createIcons();
+        }
+
         const standfmTime = await ipcRenderer.invoke('get-config', 'standfmDefaultTime') || '06:10';
         const voicyTime = localStorage.getItem('voicy_default_time') || '06:30';
+        const spotifyTime = await ipcRenderer.invoke('get-config', 'spotifyDefaultTime') || '06:00';
         const bgm = await ipcRenderer.invoke('get-config', 'standfmDefaultBgm') || '';
         const category = await ipcRenderer.invoke('get-config', 'standfmDefaultCategory') || 'ビジネス';
-        const imagePath = await ipcRenderer.invoke('get-config', 'standfmDefaultImage') || '';
-        const hashtags = generated.hashtags || '';
+        const standfmImagePath = await ipcRenderer.invoke('get-config', 'standfmDefaultImage') || '';
+        const spotifyImagePath = await ipcRenderer.invoke('get-config', 'spotifyDefaultImage') || '';
+        const spotifyDescription = await ipcRenderer.invoke('get-config', 'spotifyDefaultDescription') || standfmDescription;
 
         showToast('stand.fmへの投稿を開始します');
         const standfmResult = await ipcRenderer.invoke(
@@ -2135,9 +2230,9 @@ async function publishStandfmThenVoicy(basename, initialDate) {
             publishDate,
             standfmTime,
             category,
-            imagePath,
+            standfmImagePath,
             title,
-            'schedule'
+            publishMode
         );
 
         if (!standfmResult.success) {
@@ -2145,35 +2240,58 @@ async function publishStandfmThenVoicy(basename, initialDate) {
             return;
         }
 
-        showToast('続けてVoicyへの投稿を開始します');
-        const voicyDescription = standfmDescription;
-        const voicyChapterUrl = chapterUrl || standfmResult.standfmUrl || '';
-        const voicyResult = await ipcRenderer.invoke(
-            'publish-to-voicy',
-            basename,
-            title,
-            chapterTitle,
-            voicyChapterUrl,
-            hashtags,
-            voicyTime,
-            publishDate,
-            voicyDescription,
-            'schedule'
-        );
-
-        if (voicyResult.success) {
-            await loadAudioFiles();
-            showToast('stand.fm → Voicyの連続投稿が完了しました');
-        } else {
-            showToast(`Voicy投稿エラー: ${voicyResult.message}`, 'error');
+        if (postVoicy) {
+            showToast('続けてVoicyへの投稿を開始します');
+            const voicyResult = await ipcRenderer.invoke(
+                'publish-to-voicy',
+                basename,
+                title,
+                chapterTitle,
+                chapterUrl || standfmResult.standfmUrl || '',
+                hashtags,
+                voicyTime,
+                publishDate,
+                voicyDescription,
+                publishMode
+            );
+            if (!voicyResult.success) {
+                showToast(`Voicy投稿エラー: ${voicyResult.message}`, 'error');
+                return;
+            }
         }
+
+        if (postSpotify) {
+            showToast('続けてSpotifyへの投稿を開始します');
+            const spotifyResult = await ipcRenderer.invoke(
+                'publish-to-spotify',
+                basename,
+                title,
+                spotifyDescription,
+                spotifyImagePath,
+                publishDate,
+                spotifyTime,
+                publishMode
+            );
+            if (!spotifyResult.success) {
+                showToast(`Spotify投稿エラー: ${spotifyResult.message}`, 'error');
+                return;
+            }
+        }
+
+        closeContinuousPublishModal();
+        await loadAudioFiles();
+        showToast('連続投稿が完了しました');
     } catch (error) {
         console.error('連続投稿エラー:', error);
         showToast('連続投稿に失敗しました: ' + error.message, 'error');
+    } finally {
+        if (button) {
+            button.innerHTML = originalHTML;
+            button.disabled = false;
+            lucide.createIcons();
+        }
     }
 }
-
-
 
 // 外部URLを開く
 async function openExternalUrl(url) {
@@ -2279,7 +2397,6 @@ window.transcribeAudio = transcribeAudio;
 window.copyTranscriptionPrompt = copyTranscriptionPrompt;
 window.downloadTranscription = downloadTranscription;
 window.generateArticle = generateArticle;
-window.publishStandfmThenVoicy = publishStandfmThenVoicy;
 window.publishToVoicy = publishToVoicy;
 window.publishToSpotify = publishToSpotify;
 window.closeSpotifyPublishModal = closeSpotifyPublishModal

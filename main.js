@@ -988,50 +988,44 @@ ipcMain.handle('transcribe-audio', async (event, basename) => {
       await fs.ensureDir(tempScriptDir);
       transcribeScript = path.join(tempScriptDir, 'transcribe_audio_local.py');
 
-      // 既にコピー済みの場合はスキップ
-      if (!(await fs.pathExists(transcribeScript))) {
-        // app.asar内のファイルを読み込む
-        // app.getAppPath()はapp.asar内のパスを返す
-        const appPath = app.getAppPath();
-        const asarScriptPath = path.join(appPath, 'transcribe_audio_local.py');
+      // app.asar内のファイルを読み込む
+      // app.getAppPath()はapp.asar内のパスを返す
+      const appPath = app.getAppPath();
+      const asarScriptPath = path.join(appPath, 'transcribe_audio_local.py');
 
-        // app.asar.unpackedのパスも試す
-        const resourcesPath = process.resourcesPath;
-        const unpackedScriptPath = path.join(resourcesPath, 'app.asar.unpacked', 'transcribe_audio_local.py');
+      // app.asar.unpackedのパスも試す
+      const resourcesPath = process.resourcesPath;
+      const unpackedScriptPath = path.join(resourcesPath, 'app.asar.unpacked', 'transcribe_audio_local.py');
 
-        let sourceScriptPath = null;
+      let sourceScriptPath = null;
 
-        // まずapp.asar.unpackedを確認
-        if (await fs.pathExists(unpackedScriptPath)) {
-          sourceScriptPath = unpackedScriptPath;
-          console.log(`Found script in app.asar.unpacked: ${unpackedScriptPath}`);
-        } else if (await fs.pathExists(asarScriptPath)) {
-          sourceScriptPath = asarScriptPath;
-          console.log(`Found script in app.asar: ${asarScriptPath}`);
-        } else {
-          console.error(`Script not found in: ${asarScriptPath} or ${unpackedScriptPath}`);
-          return {
-            success: false,
-            message: `文字起こしスクリプトが見つかりません。パスを確認してください。`
-          };
-        }
-
-        // スクリプトを一時ディレクトリにコピー
-        try {
-          const scriptContent = await fs.readFile(sourceScriptPath, 'utf8');
-          await fs.writeFile(transcribeScript, scriptContent, 'utf8');
-          // 実行権限を付与
-          await fs.chmod(transcribeScript, 0o755);
-          console.log(`Copied script from ${sourceScriptPath} to ${transcribeScript}`);
-        } catch (error) {
-          console.error(`Failed to copy script: ${error.message}`);
-          return {
-            success: false,
-            message: `スクリプトの読み込みに失敗しました: ${error.message}`
-          };
-        }
+      // まずapp.asar.unpackedを確認
+      if (await fs.pathExists(unpackedScriptPath)) {
+        sourceScriptPath = unpackedScriptPath;
+        console.log(`Found script in app.asar.unpacked: ${unpackedScriptPath}`);
+      } else if (await fs.pathExists(asarScriptPath)) {
+        sourceScriptPath = asarScriptPath;
+        console.log(`Found script in app.asar: ${asarScriptPath}`);
       } else {
-        console.log(`Using existing script: ${transcribeScript}`);
+        console.error(`Script not found in: ${asarScriptPath} or ${unpackedScriptPath}`);
+        return {
+          success: false,
+          message: `文字起こしスクリプトが見つかりません。パスを確認してください。`
+        };
+      }
+
+      // アプリ更新後も新しいWhisper設定が確実に反映されるよう、毎回コピーする
+      try {
+        const scriptContent = await fs.readFile(sourceScriptPath, 'utf8');
+        await fs.writeFile(transcribeScript, scriptContent, 'utf8');
+        await fs.chmod(transcribeScript, 0o755);
+        console.log(`Copied script from ${sourceScriptPath} to ${transcribeScript}`);
+      } catch (error) {
+        console.error(`Failed to copy script: ${error.message}`);
+        return {
+          success: false,
+          message: `スクリプトの読み込みに失敗しました: ${error.message}`
+        };
       }
     } else {
       // 開発時は直接パスを使用
@@ -1086,6 +1080,15 @@ ipcMain.handle('transcribe-audio', async (event, basename) => {
     console.log(`Transcription script: ${transcribeScript}`);
     console.log(`Audio file: ${audioFilePath}`);
     console.log(`Output dir: ${textDir}`);
+
+    let whisperModel = process.env.VUT_WHISPER_MODEL || 'medium'
+    try {
+      const config = await fs.pathExists(configPath) ? await fs.readJson(configPath) : {}
+      whisperModel = process.env.VUT_WHISPER_MODEL || config.whisperModel || 'medium'
+    } catch (e) {
+      console.warn(`Could not read whisper model config. Using default model: ${whisperModel}`)
+    }
+    console.log(`Whisper model: ${whisperModel}`);
 
     // Pythonのバージョンとパスを確認（デバッグ用）
     try {
@@ -1192,7 +1195,7 @@ ipcMain.handle('transcribe-audio', async (event, basename) => {
       console.log(`Normalized text dir: ${normalizedTextDir}`);
       console.log(`Normalized script: ${normalizedScript}`);
 
-      const pythonProcess = spawn(pythonCmd, [...pythonCmdPrefixArgs, normalizedScript, normalizedAudioPath, '-o', normalizedTextDir], {
+      const pythonProcess = spawn(pythonCmd, [...pythonCmdPrefixArgs, normalizedScript, normalizedAudioPath, '-o', normalizedTextDir, '-m', whisperModel], {
         cwd: app.isPackaged ? path.dirname(normalizedScript) : __dirname,
         env: {
           ...process.env,

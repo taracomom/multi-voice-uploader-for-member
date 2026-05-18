@@ -882,6 +882,114 @@
         </div>
     </div>
 
+    <!-- 連続投稿設定モーダル -->
+    <div id="continuousPublishModal"
+        class="fixed inset-0 z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-opacity duration-300"
+        aria-hidden="true">
+        <div class="absolute inset-0 bg-slate-950/60 backdrop-blur-sm transition-opacity"
+            onclick="closeContinuousPublishModal()"></div>
+
+        <div
+            class="relative bg-slate-900 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden ring-1 ring-white/10 flex flex-col max-h-[90vh]">
+            <div class="flex items-center justify-between p-6 border-b border-slate-800 bg-slate-900/50 shrink-0">
+                <h2 class="text-lg font-bold text-slate-200 flex items-center gap-2">
+                    <span class="p-1.5 bg-blue-500/20 text-blue-400 rounded-lg"><i data-lucide="workflow"
+                            class="w-5 h-5"></i></span>
+                    連続投稿設定
+                </h2>
+                <button
+                    class="p-1.5 text-slate-400 hover:text-slate-300 hover:bg-slate-800 rounded-full transition-colors"
+                    onclick="closeContinuousPublishModal()">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <div class="p-6 overflow-y-auto flex-1">
+                <form id="continuousPublishForm" class="space-y-5">
+                    <div class="space-y-1.5">
+                        <label for="continuousBroadcastTitle"
+                            class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">タイトル</label>
+                        <input type="text" id="continuousBroadcastTitle"
+                            class="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-200 font-medium placeholder-slate-600">
+                    </div>
+
+                    <div class="space-y-1.5">
+                        <label for="continuousStandfmDescription"
+                            class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">stand.fmの放送説明</label>
+                        <textarea id="continuousStandfmDescription" rows="5" placeholder="1行目: Voicyチャプター名 / 2行目: VoicyチャプターURL"
+                            class="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-200 font-medium placeholder-slate-600 resize-none leading-relaxed"></textarea>
+                        <p class="text-[10px] text-slate-500">1行目をVoicyのチャプター名、2行目をVoicyのチャプターURLとして使います。</p>
+                    </div>
+
+                    <div class="space-y-2">
+                        <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">続けて投稿する先</label>
+                        <label class="flex items-center gap-3 px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl">
+                            <input type="checkbox" id="continuousPostVoicy" class="w-4 h-4 accent-purple-500">
+                            <span class="text-sm font-semibold text-slate-200">Voicyにも投稿</span>
+                        </label>
+                        <label class="flex items-center gap-3 px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl">
+                            <input type="checkbox" id="continuousPostSpotify" class="w-4 h-4 accent-emerald-500">
+                            <span class="text-sm font-semibold text-slate-200">Spotifyにも投稿</span>
+                        </label>
+                    </div>
+
+                    <div class="space-y-1.5">
+                        <label for="continuousVoicyDescription"
+                            class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">Voicyの放送概要</label>
+                        <textarea id="continuousVoicyDescription" rows="3"
+                            class="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-all text-slate-200 font-medium placeholder-slate-600 resize-none"></textarea>
+                        <p class="text-[10px] text-slate-500">保存済みのVoicyデフォルト概要を使います。ここでは勝手な概要生成はしません。</p>
+                    </div>
+
+                    <div class="space-y-1.5">
+                        <div class="flex items-center justify-between">
+                            <label for="continuousHashtags"
+                                class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">ハッシュタグ</label>
+                            <button type="button" id="generateContinuousHashtagsBtn"
+                                class="text-[10px] text-blue-400 hover:text-blue-300 font-bold bg-blue-500/10 hover:bg-blue-500/20 px-2 py-1 rounded-md transition-colors flex items-center gap-1">
+                                <i data-lucide="wand-2" class="w-3 h-3"></i>
+                                生成
+                            </button>
+                        </div>
+                        <textarea id="continuousHashtags" rows="2" placeholder="生成ボタンで作成、または手入力"
+                            class="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-200 font-medium placeholder-slate-600 resize-none"></textarea>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="space-y-1.5">
+                            <label for="continuousPublishMode"
+                                class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">投稿方法</label>
+                            <select id="continuousPublishMode"
+                                class="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-200 font-medium cursor-pointer">
+                                <option value="schedule">予約投稿</option>
+                                <option value="now">今すぐアップ</option>
+                            </select>
+                        </div>
+                        <div class="space-y-1.5">
+                            <label for="continuousPublishDate"
+                                class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">公開日</label>
+                            <input type="date" id="continuousPublishDate"
+                                class="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-200 font-medium cursor-pointer dark-date-input">
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <div class="flex items-center justify-end space-x-3 p-6 border-t border-slate-800 bg-slate-900/50 shrink-0">
+                <button type="button"
+                    class="px-5 py-2.5 text-slate-400 bg-slate-900 border border-slate-700 hover:bg-slate-800 rounded-xl text-sm font-semibold transition-colors shadow-sm active:bg-slate-800"
+                    onclick="closeContinuousPublishModal()">
+                    キャンセル
+                </button>
+                <button type="button" id="confirmContinuousPublishBtn"
+                    class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold transition-colors shadow-lg shadow-blue-500/30 active:scale-95 transform flex items-center gap-2">
+                    <i data-lucide="send" class="w-4 h-4"></i>
+                    stand.fmから開始
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- プラットフォーム設定モーダル -->
     <div id="platformSettingsModal"
         class="fixed inset-0 z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-opacity duration-300"
@@ -1106,7 +1214,7 @@
                         </div>
                     </div>
                     <p class="text-[11px] text-slate-500">
-                        ※ Whisper は内部で PyTorch を使うため、環境によっては初回インストールに時間がかかります
+                        ※ Whisper は内部で PyTorch を使うため、環境によっては初回インストールに時間がかかります。既定では品質重視の medium モデルをローカルで使います
                     </p>
                 </div>
             </div>
