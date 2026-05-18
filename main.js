@@ -692,7 +692,8 @@ async function callGroqChat({ apiKey, model, messages, temperature = 0.4, maxTok
     model: model || DEFAULT_GROQ_MODEL,
     messages,
     temperature,
-    max_tokens: maxTokens,
+    max_completion_tokens: maxTokens,
+    reasoning_effort: 'low',
     ...(responseFormat ? { response_format: responseFormat } : {})
   }
 
@@ -710,10 +711,17 @@ async function callGroqChat({ apiKey, model, messages, temperature = 0.4, maxTok
     }
   }
 
-  const content = response && response.choices && response.choices[0] && response.choices[0].message
-    ? response.choices[0].message.content
-    : ''
-  if (!content) throw new Error('Groq API returned empty content')
+  const choice = response && response.choices && response.choices[0] ? response.choices[0] : null
+  const message = choice && choice.message ? choice.message : null
+  const content = message ? message.content : ''
+  if (!content) {
+    const finishReason = choice && choice.finish_reason ? choice.finish_reason : 'unknown'
+    const reasoningTokens = response && response.usage && response.usage.completion_tokens_details
+      ? response.usage.completion_tokens_details.reasoning_tokens
+      : null
+    const tokenHint = reasoningTokens ? ` 推論だけで${reasoningTokens}トークン使いました。` : ''
+    throw new Error(`Groqが本文を空で返しました。finish_reason=${finishReason}.${tokenHint}`)
+  }
   return String(content).trim()
 }
 
