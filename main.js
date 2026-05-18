@@ -369,6 +369,28 @@ function normalizeTextBlock(text) {
     .trim()
 }
 
+function cleanTranscriptionText(text) {
+  let cleaned = normalizeTextBlock(text)
+    // Spokenly CLI can emit private-use separator glyphs such as "".
+    .replace(/[\uE000-\uF8FF]/g, '')
+    .replace(/\s+([、。，．！？!?])/g, '$1')
+    .replace(/([「『（(])\s+/g, '$1')
+    .replace(/\s+([」』）)])/g, '$1')
+
+  // Re-run because adjacent Japanese tokens create overlapping matches.
+  for (let i = 0; i < 12; i += 1) {
+    const next = cleaned
+      .replace(/([\u3040-\u30ff\u3400-\u9fffA-Za-z0-9０-９])\s+([\u3040-\u30ff\u3400-\u9fffA-Za-z0-9０-９])/g, '$1$2')
+    if (next === cleaned) break
+    cleaned = next
+  }
+
+  return cleaned
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 function makeTitleTags(title) {
   const stopWords = new Set([
     'です', 'ます', 'こと', 'これ', 'それ', 'ため', 'よう', '今回', '今日', '昨日', '明日',
@@ -486,7 +508,7 @@ async function transcribeWithSpokenlyCli(audioFilePath, outputFilePath, enhanced
     }
   )
 
-  const transcript = normalizeTextBlock(result.stdout)
+  const transcript = cleanTranscriptionText(result.stdout)
   if (result.success && transcript) {
     await fs.writeFile(outputFilePath, transcript, 'utf8')
     return {
@@ -1392,6 +1414,11 @@ ipcMain.handle('transcribe-audio', async (event, basename) => {
         if (code === 0) {
           // 成功時に出力ファイルの存在を確認
           if (await fs.pathExists(outputFilePath)) {
+            const rawTranscript = await fs.readFile(outputFilePath, 'utf8')
+            const cleanedTranscript = cleanTranscriptionText(rawTranscript)
+            if (cleanedTranscript && cleanedTranscript !== rawTranscript) {
+              await fs.writeFile(outputFilePath, cleanedTranscript, 'utf8')
+            }
             resolve({
               success: true,
               message: 'Transcription completed successfully',
