@@ -617,8 +617,6 @@ async function readTextIfExists(filePath, maxLength) {
 }
 
 async function loadNoteWritingGuidance() {
-  const styleSample = await readTextIfExists(NOTE_STYLE_SAMPLE_PATH, 700)
-
   return [
     'ウミノ式note記事ルール要約:',
     '- 一人称は「わたし」。40代以上の働く女性に「あなた」と語りかける。',
@@ -628,8 +626,7 @@ async function loadNoteWritingGuidance() {
     '- 「で、」で段落を始めない。辞書形・可能形・否定形の言い切りで終えない。',
     '- note記事は、導入、本文3〜5セクション、最後に要点箇条書きと次のアクション。',
     '- 記事末尾に #ウミノ を含むnote向けハッシュタグを10個入れる。',
-    '- メルマガは件名案、導入、本文、CTAを入れる。',
-    styleSample ? `参考文体の短い抜粋:\n${styleSample}` : ''
+    '- メルマガは件名案、導入、本文、CTAを入れる。'
   ].filter(Boolean).join('\n')
 }
 
@@ -699,7 +696,7 @@ async function callGroqChat({ apiKey, model, messages, temperature = 0.4, maxTok
     ...(responseFormat ? { response_format: responseFormat } : {})
   }
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
       response = await postJson('https://api.groq.com/openai/v1/chat/completions', body, {
         Authorization: `Bearer ${apiKey}`
@@ -707,8 +704,8 @@ async function callGroqChat({ apiKey, model, messages, temperature = 0.4, maxTok
       break
     } catch (error) {
       const retryMs = getGroqRetryMs(error)
-      if (!retryMs || attempt === 1) throw error
-      console.warn(`Groq rate limit reached. Retrying in ${retryMs}ms`)
+      if (!retryMs || attempt === 4) throw error
+      console.warn(`Groq rate limit reached. Retrying in ${retryMs}ms (attempt ${attempt + 2}/5)`)
       await sleep(retryMs)
     }
   }
@@ -742,7 +739,7 @@ async function generateAiMarkdownSet({ title, transcript, sourceUrl, basename, c
 
   const model = config.groqModel || DEFAULT_GROQ_MODEL
   const writingGuidance = await loadNoteWritingGuidance()
-  const transcriptForPrompt = compressTranscriptForGroq(transcript, 4200)
+  const transcriptForPrompt = compressTranscriptForGroq(transcript, 2600)
   const sourceLine = sourceUrl ? `元リンク: ${sourceUrl}` : '元リンク: なし'
   const systemMessage = [
     'あなたはウミノさんの音声配信を、note記事・メルマガ・タイトル案へ編集する日本語編集者です。',
@@ -757,7 +754,7 @@ async function generateAiMarkdownSet({ title, transcript, sourceUrl, basename, c
     apiKey,
     model,
     temperature: 0.35,
-    maxTokens: 3000,
+    maxTokens: 1800,
     messages: [
       { role: 'system', content: `${systemMessage}\n\n必ずJSONだけを返してください。説明文やコードフェンスは禁止です。` },
       {
@@ -769,12 +766,12 @@ async function generateAiMarkdownSet({ title, transcript, sourceUrl, basename, c
           '',
           '以下の文字起こしから、まず要点を抽出し、その要点をもとにnote記事・タイトル候補・メルマガ本文を作ってください。',
           '文字起こしをそのまま貼り付けないでください。読者が読みやすい文章に再構成してください。',
-          'note記事は短い要約ではなく、ブログ記事として自然な導入、見出し、具体例、行動提案を入れてください。',
+          'note記事は短い要約ではなく、ブログ記事として自然な導入、見出し、具体例、行動提案を入れてください。ただしGroqの制限に合わせて簡潔にしてください。',
           '',
           '返却JSON形式:',
           '{',
           '  "keyPoints": "要点抽出Markdown。# 要点抽出: タイトル から始める。重要論点、背景、具体例、読者への示唆を整理。",',
-          '  "noteArticle": "note用ブログ記事Markdown。#タイトルから始める。900〜1500字程度。文字起こしのコピペではなく、ブログ記事として再構成。記事末尾にハッシュタグ10個。",',
+          '  "noteArticle": "note用ブログ記事Markdown。#タイトルから始める。600〜1000字程度。文字起こしのコピペではなく、ブログ記事として再構成。記事末尾にハッシュタグ10個。",',
           '  "titleCandidates": "タイトル候補Markdown。# タイトル候補: タイトル から始め、候補を10個以上。",',
           '  "newsletter": "メルマガ本文Markdown。件名案、導入、本文、CTAを含める。",',
           '  "summary": "短い生成メモ"',
