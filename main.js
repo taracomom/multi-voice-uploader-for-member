@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs-extra');
 const { spawn, execSync } = require('child_process');
 const os = require('os');
+const https = require('https');
 const { registerVoicyPublishHandler } = require('./main/voicy-publish')
 const { registerStandfmPublishHandler } = require('./main/standfm-publish')
 const { registerSpotifyPublishHandler } = require('./main/spotify-publish')
@@ -63,6 +64,11 @@ const initPaths = () => {
 }
 
 const getAppPaths = () => ({ audioDir, mdDir, metadataPath })
+
+const NOTE_RULES_PATH = '/Users/owner/Umino/Umino_Vault/.claude/rules/note_rules.md'
+const ABOUT_UMINO_PATH = '/Users/owner/Umino/Umino_Vault/.claude/rules/about-umino.md'
+const NOTE_STYLE_SAMPLE_PATH = '/Users/owner/Umino/Umino_Vault/04_Publications/02_note/20250803_note投稿したらSNSにお知らせを送るMakeシナリオ作った話.md'
+const DEFAULT_GROQ_MODEL = 'openai/gpt-oss-20b'
 
 function getCandidateUserDataDirs() {
   const dirs = new Set()
@@ -580,6 +586,201 @@ function trimText(text, maxLength) {
   return value.slice(0, maxLength - 1).trimEnd() + '…'
 }
 
+function truncateForPrompt(text, maxLength) {
+  const value = String(text || '').trim()
+  if (value.length <= maxLength) return value
+  return `${value.slice(0, maxLength).trimEnd()}\n\n[...truncated...]`
+}
+
+async function readTextIfExists(filePath, maxLength) {
+  try {
+    if (!(await fs.pathExists(filePath))) return ''
+    return truncateForPrompt(await fs.readFile(filePath, 'utf8'), maxLength)
+  } catch (e) {
+    console.warn(`Could not read prompt reference: ${filePath}: ${e.message}`)
+    return ''
+  }
+}
+
+async function loadNoteWritingGuidance() {
+  const [noteRules, aboutUmino, styleSample] = await Promise.all([
+    readTextIfExists(NOTE_RULES_PATH, 9000),
+    readTextIfExists(ABOUT_UMINO_PATH, 5000),
+    readTextIfExists(NOTE_STYLE_SAMPLE_PATH, 9000)
+  ])
+
+  return [
+    noteRules ? `# note_rules.md\n${noteRules}` : '',
+    aboutUmino ? `# about-umino.md\n${aboutUmino}` : '',
+    styleSample ? `# 参考文体サンプル\n${styleSample}` : ''
+  ].filter(Boolean).join('\n\n---\n\n')
+}
+
+function postJson(urlString, body, headers = {}, timeoutMs = 120000) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(urlString)
+    const payload = JSON.stringify(body)
+    const request = https.request({
+      method: 'POST',
+      hostname: url.hostname,
+      path: `${url.pathname}${url.search}`,
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+        ...headers
+      },
+      timeout: timeoutMs
+    }, response => {
+      let data = ''
+      response.setEncoding('utf8')
+      response.on('data', chunk => { data += chunk })
+      response.on('end', () => {
+        let parsed = null
+        try {
+          parsed = data ? JSON.parse(data) : null
+        } catch (e) {
+          // handled below
+        }
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          resolve(parsed || data)
+        } else {
+          const message = parsed && parsed.error && parsed.error.message ? parsed.error.message : data
+          reject(new Error(`Groq API error ${response.statusCode}: ${message}`))
+        }
+      })
+    })
+
+    request.on('timeout', () => {
+      request.destroy(new Error('Groq API request timed out'))
+    })
+    request.on('error', reject)
+    request.write(payload)
+    request.end()
+  })
+}
+
+async function callGroqChat({ apiKey, model, messages, temperature = 0.4, maxTokens = 6000 }) {
+  const response = await postJson('https://api.groq.com/openai/v1/chat/completions', {
+    model: model || DEFAULT_GROQ_MODEL,
+    messages,
+    temperature,
+    max_tokens: maxTokens
+  }, {
+    Authorization: `Bearer ${apiKey}`
+  })
+
+  const content = response && response.choices && response.choices[0] && response.choices[0].message
+    ? response.choices[0].message.content
+    : ''
+  if (!content) throw new Error('Groq API returned empty content')
+  return String(content).trim()
+}
+
+function parseJsonObjectFromText(text) {
+  const value = String(text || '').trim()
+  const fenced = value.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const jsonText = fenced ? fenced[1].trim() : value
+  try {
+    return JSON.parse(jsonText)
+  } catch (e) {
+    const first = jsonText.indexOf('{')
+    const last = jsonText.lastIndexOf('}')
+    if (first >= 0 && last > first) {
+      return JSON.parse(jsonText.slice(first, last + 1))
+    }
+    throw e
+  }
+}
+
+async function generateAiMarkdownSet({ title, transcript, sourceUrl, basename, config }) {
+  const apiKey = config.groqApiKey || process.env.GROQ_API_KEY
+  if (!apiKey) throw new Error('Groq APIキーが設定されていません')
+
+  const model = config.groqModel || DEFAULT_GROQ_MODEL
+  const writingGuidance = await loadNoteWritingGuidance()
+  const transcriptForPrompt = truncateForPrompt(cleanTranscriptionText(transcript), 50000)
+  const sourceLine = sourceUrl ? `元リンク: ${sourceUrl}` : '元リンク: なし'
+  const systemMessage = [
+    'あなたはウミノさんの音声配信を、note記事・メルマガ・タイトル案へ編集する日本語編集者です。',
+    '音声内容にない事実、数値、体験談は捏造しないでください。',
+    'Markdownはnote向け制約を守ってください。H4以上、テーブル、太字記法は禁止です。',
+    '口調・構成・禁止語は以下のルールを最優先してください。',
+    writingGuidance
+  ].join('\n\n')
+
+  const keyPoints = await callGroqChat({
+    apiKey,
+    model,
+    temperature: 0.2,
+    maxTokens: 2500,
+    messages: [
+      { role: 'system', content: systemMessage },
+      {
+        role: 'user',
+        content: [
+          `タイトル: ${title}`,
+          sourceLine,
+          '',
+          '以下の文字起こしから、note記事化する前の要点抽出Markdownを作ってください。',
+          '条件:',
+          '- 見出しは「# 要点抽出: タイトル」から始める',
+          '- 重要な主張、背景、具体例、読者への示唆を分ける',
+          '- 後続の記事執筆に使えるよう、音声内の事実を落とさない',
+          '- 捏造しない',
+          '',
+          '文字起こし:',
+          transcriptForPrompt
+        ].join('\n')
+      }
+    ]
+  })
+
+  const contentJson = await callGroqChat({
+    apiKey,
+    model,
+    temperature: 0.45,
+    maxTokens: 12000,
+    messages: [
+      { role: 'system', content: `${systemMessage}\n\n必ずJSONだけを返してください。説明文やコードフェンスは禁止です。` },
+      {
+        role: 'user',
+        content: [
+          `タイトル: ${title}`,
+          `ファイル名ベース: ${basename}`,
+          sourceLine,
+          '',
+          '先に抽出した要点:',
+          keyPoints,
+          '',
+          '元の文字起こし:',
+          transcriptForPrompt,
+          '',
+          '次のJSON形式で返してください。',
+          '{',
+          '  "noteArticle": "note用ブログ記事Markdown。3000字以上を目安。#タイトルから始める。記事末尾にnote_rules.mdの固定フッターとハッシュタグ10個を入れる。",',
+          '  "titleCandidates": "タイトル候補Markdown。# タイトル候補: タイトル から始め、候補を10個以上。",',
+          '  "newsletter": "メルマガ本文Markdown。件名案、導入、本文、CTAを含める。",',
+          '  "summary": "短い生成メモ"',
+          '}'
+        ].join('\n')
+      }
+    ]
+  })
+
+  const parsed = parseJsonObjectFromText(contentJson)
+  if (!parsed.noteArticle || !parsed.titleCandidates || !parsed.newsletter) {
+    throw new Error('Groq APIのJSONに必要な項目がありません')
+  }
+
+  return {
+    keyPoints: String(keyPoints).trim(),
+    noteArticle: String(parsed.noteArticle).trim(),
+    titleCandidates: String(parsed.titleCandidates).trim(),
+    newsletter: String(parsed.newsletter).trim(),
+    summary: parsed.summary ? String(parsed.summary).trim() : ''
+  }
+}
+
 function extractKeywordCandidates(title, transcript) {
   const source = `${title}\n${transcript}`
     .replace(/[【】「」『』（）()［］\[\]!?！？、。,.／/｜|:：;；・\-_]/g, ' ')
@@ -691,26 +892,41 @@ ipcMain.handle('generate-article-md', async (event, basename, options = {}) => {
     const title = options.title || itemMetadata.title || basename.replace(/^\d{8}_/, '')
     const sourceUrl = options.sourceUrl || itemMetadata.standfmUrl || itemMetadata.voicyUrl || ''
     const paths = getGeneratedMarkdownFiles(basename)
+    const config = await fs.pathExists(configPath) ? await fs.readJson(configPath) : {}
+
+    let generatedBy = 'local-template'
+    let aiGenerationSummary = ''
+    let aiContent = null
+    if (config.groqApiKey || process.env.GROQ_API_KEY) {
+      try {
+        aiContent = await generateAiMarkdownSet({ title, transcript, sourceUrl, basename, config })
+        generatedBy = `groq:${config.groqModel || DEFAULT_GROQ_MODEL}`
+        aiGenerationSummary = aiContent.summary || ''
+      } catch (aiError) {
+        console.error('Groq article generation failed. Falling back to local templates:', aiError)
+      }
+    }
+
     const files = {
       keyPoints: {
         label: '要点抽出',
         path: paths.keyPoints,
-        content: buildKeyPointsMarkdown({ title, transcript, sourceUrl })
+        content: aiContent ? aiContent.keyPoints : buildKeyPointsMarkdown({ title, transcript, sourceUrl })
       },
       noteArticle: {
         label: 'note記事',
         path: paths.noteArticle,
-        content: buildNoteArticleMarkdown({ title, transcript, sourceUrl })
+        content: aiContent ? aiContent.noteArticle : buildNoteArticleMarkdown({ title, transcript, sourceUrl })
       },
       titleCandidates: {
         label: 'タイトル候補',
         path: paths.titleCandidates,
-        content: buildTitleCandidatesMarkdown({ title, transcript })
+        content: aiContent ? aiContent.titleCandidates : buildTitleCandidatesMarkdown({ title, transcript })
       },
       newsletter: {
         label: 'メルマガ本文',
         path: paths.newsletter,
-        content: buildNewsletterMarkdown({ title, transcript, sourceUrl })
+        content: aiContent ? aiContent.newsletter : buildNewsletterMarkdown({ title, transcript, sourceUrl })
       }
     }
     const combinedContent = buildCombinedMarkdownSet(files)
@@ -725,6 +941,8 @@ ipcMain.handle('generate-article-md', async (event, basename, options = {}) => {
       articleGeneratedDate: new Date().toISOString(),
       contentMdGenerated: true,
       contentMdGeneratedDate: new Date().toISOString(),
+      contentMdGeneratedBy: generatedBy,
+      contentMdGenerationSummary: aiGenerationSummary,
       generatedMdPaths: Object.fromEntries(Object.entries(files).map(([key, file]) => [key, file.path]))
     }
     await fs.writeJson(metadataPath, metadata, { spaces: 2 })
@@ -734,7 +952,8 @@ ipcMain.handle('generate-article-md', async (event, basename, options = {}) => {
       path: paths.noteArticle,
       paths: Object.fromEntries(Object.entries(files).map(([key, file]) => [key, file.path])),
       content: files.noteArticle.content,
-      combinedContent
+      combinedContent,
+      generatedBy
     }
   } catch (error) {
     console.error('Error generating article:', error)
